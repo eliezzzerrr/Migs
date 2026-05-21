@@ -1,0 +1,60 @@
+# Migs — XAUUSD 5m Trading Agent
+
+This project hosts a Claude Code subagent (`migs-trader`) that grades XAUUSD chart screenshots against the **Migs Hybrid Strategy** doctrine and issues structured signals or NO-TRADE calls.
+
+## How to invoke
+
+Drop a 5m + 1H chart screenshot into the conversation (or `screenshots/`) and say:
+
+> "Migs — grade this setup"
+
+…or just "use migs-trader". The agent activates when the message contains "Migs" or a chart image is provided.
+
+## Directory layout
+
+```
+Migs/
+├── CLAUDE.md                       ← you are here
+├── .claude/agents/migs-trader.md   ← agent definition
+├── doctrine/                       ← strategy reference (loaded on demand)
+│   ├── migs-hybrid-strategy.md     ← full doctrine
+│   ├── grading-rubric.md           ← 12-point quality rubric (A+ → F, journaling only)
+│   └── checklists.md               ← 6-check binary acceptance (mirror of §9) + killflags
+├── workflows/                      ← step-by-step procedures
+│   ├── signal-generation.md        ← the main pipeline
+│   ├── news-check.md               ← ForexFactory gate
+│   ├── pattern-tagging.md          ← how patterns get #NN
+│   ├── outcome-update.md           ← how to log TP/SL hits
+│   └── weekly-review.md            ← weekly pattern adjustment
+├── patterns/                       ← pattern library + stats
+│   ├── stats.json                  ← aggregated WR per pattern
+│   ├── 01-buy-base.md
+│   └── 02-sell-base.md
+├── journal/                        ← one .md per trade, YYYY/MM/
+├── reviews/                        ← weekly review files
+├── scripts/
+│   └── update_stats.py             ← recompute stats.json from journal
+└── screenshots/                    ← chart images go here (gitignored)
+```
+
+## Phase
+
+- **DEMO** — 1% risk per trade. Target ≥30 resolved Migs trades, WR ≥40%, +10R total to graduate to LIVE.
+- Every signal is tagged `Phase: DEMO` until graduation criteria are met.
+
+## Core rules the agent obeys (hard)
+
+1. **Two-pass chart reading** — first extract observable primitives (OB bounds, structure levels, DOL prices, swing wick references) as structured JSON. Only then reason about the setup. Never invent levels.
+2. **News gate: DISABLED** (as of 2026-05-21, per user). Trader assumes responsibility for news awareness. Re-enable by reverting this rule and `workflows/news-check.md`.
+3. **Pattern WR gate** — if direction (BUY or SELL) has ≥5 closed trades AND win-rate <40% ⇒ NO TRADE that direction.
+4. **One strategy.** Migs Hybrid is the only strategy. Don't invent setup types. The trader identifies the structural entry; the doctrine prescribes SL/TP/management.
+5. **3-TP / thirds management.** Every trade: TP1=+1R, TP2=+2R, TP3=+3R, 1/3 size at each. Blended +2R when all fill. See `doctrine/migs-hybrid-strategy.md`.
+6. **One signal per invocation** — fresh context every time. Persist learning to files, not to chat history.
+
+## Weekly review
+
+Every Sunday (or on request), run the `weekly-review` workflow. The agent reads all journal entries from the last 7 days, recomputes `patterns/stats.json`, clusters novel setups into refined patterns, and proposes doctrine adjustments to a new `reviews/YYYY-Www.md`.
+
+## When the EA comes later
+
+The journal schema is intentionally rich (MFE/MAE in R, ATR, spread, chart_features_json) so it doubles as training data for a future MT5 Expert Advisor. Don't drop fields even if they look unused now.

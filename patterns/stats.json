@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "updated_at_utc": "2026-05-21T17:42:10+00:00",
+  "global": {
+    "total_resolved": 7,
+    "wins": 5,
+    "losses": 2,
+    "be": 0,
+    "win_rate": 0.7143,
+    "total_r": 10.0,
+    "avg_r": 1.4286,
+    "consecutive_losses": 0,
+    "graduation": {
+      "trades_required": 30,
+      "wr_required": 0.4,
+      "r_required": 10.0,
+      "trades_progress": 7,
+      "ready": false
+    }
+  },
+  "patterns": {
+    "buy": {
+      "name": "Hybrid BUY",
+      "status": "active",
+      "trades": 4,
+      "wins": 3,
+      "losses": 1,
+      "be": 0,
+      "open": 0,
+      "tp1_hit": 0,
+      "tp2_hit": 2,
+      "sl_hit": 1,
+      "total_r": 6.0,
+      "win_rate": 0.75,
+      "avg_r": 1.5,
+      "last_5_outcomes": [
+        "TP2_HIT",
+        "TP2_HIT",
+        "TP3_HIT",
+        "SL_HIT"
+      ],
+      "gated": false,
+      "gate_reason": null,
+      "tp3_hit": 1
+    },
+    "sell": {
+      "name": "Hybrid SELL",
+      "status": "active",
+      "trades": 3,
+      "wins": 2,
+      "losses": 1,
+      "be": 0,
+      "open": 0,
+      "tp1_hit": 0,
+      "tp2_hit": 1,
+      "sl_hit": 1,
+      "total_r": 4.0,
+      "win_rate": 0.6667,
+      "avg_r": 1.3333,
+      "last_5_outcomes": [
+        "TP2_HIT",
+        "SL_HIT",
+        "TP3_HIT"
+      ],
+      "gated": false,
+      "gate_reason": null,
+      "tp3_hit": 1
+    }
+  },
+  "gate_rules": {
+    "wr_gate_min_trades": 5,
+    "wr_gate_threshold": 0.4,
+    "consecutive_loss_modifier_threshold": 3
+  }
+}

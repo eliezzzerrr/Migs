@@ -1,0 +1,772 @@
+// =====================================================================
+//  Migs Hybrid — TradingView Pine Script v6 (INDICATOR)
+//  Universal: any symbol, any timeframe. Designed for M5 / H1 bias.
+//
+//  Visual + signal indicator. Does NOT execute trades. Use the alerts
+//  to drive webhooks, or take trades manually based on what's drawn.
+//
+//  On-chart display:
+//    - Session boxes (Asia / London / NY-AM) with H/L labels + extending H/L lines
+//    - OB box at the order block the BOS fired from
+//    - BOS triangle markers
+//    - Simulated trade levels: Entry / SL / TP1 / TP2 / TP3 with R-labels
+//    - SL line flips cyan when TP1 fills (BE move)
+//    - Status table with bias / ADX / ATR-ratio / chop / sim stats
+//
+//  Strategy mirrored from the MT5 EA / discretionary doctrine:
+//    1. M5 BOS (close beyond recent fractal swing)
+//    2. OB = last opposite-color candle before BOS impulse
+//    3. HTF bias must align (EMA20/50 on H1 by default)
+//    4. Chop filter (strict H1 / ADX / BOS conflict / ATR squeeze)
+//    5. Entry near OB (≤ ATR proximity)
+//    6. SL beyond OB ± buffer → defines 1R
+//    7. TP1/TP2/TP3 = entry ± 1R/2R/3R (mechanical)
+//    8. After TP1: SL → BE
+// =====================================================================
+//@version=6
+
+indicator("Migs Hybrid v6 (Indicator)",
+     overlay              = true,
+     max_lines_count      = 500,
+     max_labels_count     = 500,
+     max_boxes_count      = 500)
+
+// =====================================================================
+// INPUTS
+// =====================================================================
+g_struct    = "Structure Detection"
+i_swing_len = input.int(2,   "Swing pivot strength (bars L/R)", minval=1, group=g_struct)
+i_bos_age   = input.int(30,  "Max BOS age (bars)",              minval=1, group=g_struct)
+i_ob_age    = input.int(60,  "Max OB lookback (bars)",          minval=1, group=g_struct)
+i_entry_atr = input.float(0.7, "Entry proximity (× ATR)",       minval=0.0, step=0.1, group=g_struct)
+i_atr_per   = input.int(14,  "ATR period",                       minval=1, group=g_struct)
+i_sl_buf    = input.float(0.10, "SL buffer (× ATR beyond OB)",  minval=0.0, step=0.05, group=g_struct)
+
+g_htf       = "HTF Bias"
+i_req_h1    = input.bool(true,  "Require 1H bias agreement",    group=g_htf)
+i_h1_tf     = input.timeframe("60", "HTF timeframe",            group=g_htf)
+i_h1_fast   = input.int(20, "HTF fast EMA",                      minval=1, group=g_htf)
+i_h1_slow   = input.int(50, "HTF slow EMA",                      minval=1, group=g_htf)
+
+g_chop      = "Chop / Consolidation Filter"
+i_chop_on   = input.bool(true,  "Enable chop filter",            group=g_chop)
+i_strict_h1 = input.bool(true,  "Strict H1: reject ranging bias", group=g_chop)
+i_adx_min   = input.float(20.0, "ADX minimum (0 = disable)",     minval=0.0, step=0.5, group=g_chop)
+i_adx_per   = input.int(14,  "ADX period",                       minval=1, group=g_chop)
+i_adx_tf    = input.timeframe("15", "ADX timeframe",             group=g_chop)
+i_bos_conf  = input.int(40,  "Whipsaw lookback bars (0 = off)",  minval=0, group=g_chop)
+i_atr_exp   = input.float(0.80, "ATR expansion ratio (0 = off)", minval=0.0, step=0.05, group=g_chop)
+i_atr_ma    = input.int(50,  "ATR MA period",                    minval=2, group=g_chop)
+
+g_sim       = "Simulated Trades (visualization only)"
+i_sim_on    = input.bool(true,  "Track simulated trades",        group=g_sim)
+i_move_be   = input.bool(true,  "Move SL → BE after TP1",        group=g_sim)
+i_cooldown  = input.int(6,   "Cooldown bars after sim close",    minval=0, group=g_sim)
+
+g_sess      = "Session Boxes"
+i_sess_on   = input.bool(true,  "Show session boxes",            group=g_sess)
+i_sess_tz   = input.string("UTC", "Session timezone",
+                            options=["UTC","America/New_York","Europe/London","Asia/Tokyo","Asia/Manila","Australia/Sydney"], group=g_sess)
+i_asia_ses  = input.session("0000-0700:1234567", "Asia session",   group=g_sess)
+i_lon_ses   = input.session("0700-1000:1234567", "London session", group=g_sess)
+i_ny_ses    = input.session("1230-1530:1234567", "NY-AM session",  group=g_sess)
+i_extend_hl = input.bool(true,  "Extend session H/L lines right (until next same session)", group=g_sess)
+i_show_hl_lbl = input.bool(true, "Show H/L price labels (AS.H, LO.L, etc.)", group=g_sess)
+i_sess_label_size = input.string("huge", "Center label size", options=["normal","large","huge"], group=g_sess)
+
+g_disp      = "On-Chart Display"
+i_show_tbl  = input.bool(true,  "Show status table",             group=g_disp)
+i_tbl_pos   = input.string("top_right", "Table position",
+                           options=["top_left","top_right","middle_left","middle_right","bottom_left","bottom_right"], group=g_disp)
+i_draw_lvl  = input.bool(true,  "Draw entry / SL / TP lines",    group=g_disp)
+i_draw_ob   = input.bool(true,  "Draw OB boxes",                 group=g_disp)
+i_draw_bos  = input.bool(true,  "Mark BOS arrows",               group=g_disp)
+i_label_R   = input.bool(true,  "Label R-values on TPs",         group=g_disp)
+
+g_colors    = "Colors"
+i_col_buy   = input.color(color.new(#26a69a, 0),  "BUY accent",   group=g_colors)
+i_col_sell  = input.color(color.new(#ef5350, 0),  "SELL accent",  group=g_colors)
+i_col_ob_d  = input.color(color.new(#26a69a, 80), "Demand OB fill", group=g_colors)
+i_col_ob_s  = input.color(color.new(#ef5350, 80), "Supply OB fill", group=g_colors)
+i_col_be    = input.color(color.new(#26c6da, 0),  "SL→BE color",  group=g_colors)
+i_col_asia  = input.color(color.new(#5c9eff, 85), "Asia fill",    group=g_colors)
+i_col_lon   = input.color(color.new(#ff7a7a, 85), "London fill",  group=g_colors)
+i_col_nyam  = input.color(color.new(#5fd6b3, 85), "NY-AM fill",   group=g_colors)
+i_col_asia_t = input.color(color.new(#5c9eff, 60), "Asia label/line",   group=g_colors)
+i_col_lon_t  = input.color(color.new(#ff7a7a, 60), "London label/line", group=g_colors)
+i_col_nyam_t = input.color(color.new(#5fd6b3, 60), "NY-AM label/line",  group=g_colors)
+
+// =====================================================================
+// INDICATORS
+// =====================================================================
+atr_val    = ta.atr(i_atr_per)
+atr_ma_val = ta.sma(atr_val, i_atr_ma)
+atr_ratio  = atr_ma_val > 0 ? atr_val / atr_ma_val : 1.0
+
+h1_close = request.security(syminfo.tickerid, i_h1_tf, close, barmerge.gaps_off, barmerge.lookahead_off)
+h1_fast  = request.security(syminfo.tickerid, i_h1_tf, ta.ema(close, i_h1_fast), barmerge.gaps_off, barmerge.lookahead_off)
+h1_slow  = request.security(syminfo.tickerid, i_h1_tf, ta.ema(close, i_h1_slow), barmerge.gaps_off, barmerge.lookahead_off)
+h1_bull  = h1_fast > h1_slow and h1_close > h1_fast
+h1_bear  = h1_fast < h1_slow and h1_close < h1_fast
+h1_bias_s = h1_bull ? "bullish" : h1_bear ? "bearish" : "ranging"
+
+adx_val  = request.security(syminfo.tickerid, i_adx_tf, ta.adx(i_adx_per), barmerge.gaps_off, barmerge.lookahead_off)
+
+// =====================================================================
+// STRUCTURE — SWINGS / BOS / OB
+// =====================================================================
+ph = ta.pivothigh(i_swing_len, i_swing_len)
+pl = ta.pivotlow (i_swing_len, i_swing_len)
+
+var float last_sh    = na
+var int   last_sh_bi = na
+var float last_sl    = na
+var int   last_sl_bi = na
+
+if not na(ph)
+    last_sh    := ph
+    last_sh_bi := bar_index - i_swing_len
+if not na(pl)
+    last_sl    := pl
+    last_sl_bi := bar_index - i_swing_len
+
+bull_bos = not na(last_sh) and close > last_sh and close[1] <= last_sh
+bear_bos = not na(last_sl) and close < last_sl and close[1] >= last_sl
+
+var bool  active_bull_bos = false
+var bool  active_bear_bos = false
+var int   bos_bar         = na
+var int   last_bull_bos_b = na
+var int   last_bear_bos_b = na
+
+if bull_bos
+    active_bull_bos := true
+    active_bear_bos := false
+    bos_bar         := bar_index
+    last_bull_bos_b := bar_index
+if bear_bos
+    active_bear_bos := true
+    active_bull_bos := false
+    bos_bar         := bar_index
+    last_bear_bos_b := bar_index
+
+if active_bull_bos and (bar_index - bos_bar) > i_bos_age
+    active_bull_bos := false
+if active_bear_bos and (bar_index - bos_bar) > i_bos_age
+    active_bear_bos := false
+
+var float ob_high = na
+var float ob_low  = na
+var int   ob_bar  = na
+var bool  ob_demand = na
+
+if bull_bos
+    ob_high := na
+    ob_low  := na
+    ob_bar  := na
+    for i = 1 to math.min(i_ob_age, bar_index - 1)
+        if close[i] < open[i]
+            ob_high   := high[i]
+            ob_low    := low[i]
+            ob_bar    := bar_index - i
+            ob_demand := true
+            break
+
+if bear_bos
+    ob_high := na
+    ob_low  := na
+    ob_bar  := na
+    for i = 1 to math.min(i_ob_age, bar_index - 1)
+        if close[i] > open[i]
+            ob_high   := high[i]
+            ob_low    := low[i]
+            ob_bar    := bar_index - i
+            ob_demand := false
+            break
+
+// =====================================================================
+// CHOP FILTER
+// =====================================================================
+whipsaw_for_bull = i_bos_conf > 0 and not na(last_bear_bos_b) and (bar_index - last_bear_bos_b) < i_bos_conf
+whipsaw_for_bear = i_bos_conf > 0 and not na(last_bull_bos_b) and (bar_index - last_bull_bos_b) < i_bos_conf
+
+chop_reason_bull = ""
+chop_reason_bear = ""
+
+if i_chop_on
+    if i_strict_h1 and not h1_bull and not h1_bear
+        chop_reason_bull := "1H bias ranging"
+        chop_reason_bear := "1H bias ranging"
+    else
+        if i_adx_min > 0 and adx_val < i_adx_min
+            adx_msg = "ADX " + str.tostring(adx_val, "0.0") + " < " + str.tostring(i_adx_min, "0.0")
+            chop_reason_bull := adx_msg
+            chop_reason_bear := adx_msg
+        if chop_reason_bull == "" and i_atr_exp > 0 and atr_ratio < i_atr_exp
+            atr_msg = "ATR squeeze " + str.tostring(atr_ratio, "0.00") + " < " + str.tostring(i_atr_exp, "0.00")
+            chop_reason_bull := atr_msg
+            chop_reason_bear := atr_msg
+        if chop_reason_bull == "" and whipsaw_for_bull
+            chop_reason_bull := "whipsaw: bear BOS in " + str.tostring(i_bos_conf) + " bars"
+        if chop_reason_bear == "" and whipsaw_for_bear
+            chop_reason_bear := "whipsaw: bull BOS in " + str.tostring(i_bos_conf) + " bars"
+
+// =====================================================================
+// SETUP DETECTION
+// =====================================================================
+have_ob_bull = active_bull_bos and not na(ob_high) and ob_demand == true
+have_ob_bear = active_bear_bos and not na(ob_low)  and ob_demand == false
+
+dist_bull = have_ob_bull ? (close > ob_high ? close - ob_high : 0.0) : na
+dist_bear = have_ob_bear ? (close < ob_low  ? ob_low  - close : 0.0) : na
+
+near_bull = have_ob_bull and not na(dist_bull) and dist_bull <= i_entry_atr * atr_val
+near_bear = have_ob_bear and not na(dist_bear) and dist_bear <= i_entry_atr * atr_val
+
+h1_ok_bull = not i_req_h1 or h1_bull or (not h1_bear and not i_strict_h1)
+h1_ok_bear = not i_req_h1 or h1_bear or (not h1_bull and not i_strict_h1)
+
+bull_setup = have_ob_bull and near_bull and h1_ok_bull and chop_reason_bull == ""
+bear_setup = have_ob_bear and near_bear and h1_ok_bear and chop_reason_bear == ""
+
+// =====================================================================
+// SIMULATED TRADE TRACKING (visualization only — no orders)
+// =====================================================================
+var bool  sim_long      = false
+var bool  sim_short     = false
+var float sim_entry     = na
+var float sim_sl        = na
+var float sim_tp1       = na
+var float sim_tp2       = na
+var float sim_tp3       = na
+var float sim_eff_sl    = na
+var bool  sim_tp1_done  = false
+var int   sim_open_bar  = na
+var int   sim_close_bar = na
+
+var int   sim_wins      = 0
+var int   sim_losses    = 0
+var float sim_total_r   = 0.0
+var int   sim_count     = 0
+
+var int   day_anchor    = na
+var float day_r_anchor  = 0.0
+day_today = dayofmonth(time)
+if na(day_anchor) or day_today != day_anchor
+    day_anchor   := day_today
+    day_r_anchor := sim_total_r
+day_r_now = sim_total_r - day_r_anchor
+
+cooldown_ok = na(sim_close_bar) or (bar_index - sim_close_bar) >= i_cooldown
+sim_idle    = not sim_long and not sim_short
+
+// Open simulated position
+if i_sim_on and sim_idle and cooldown_ok and barstate.isconfirmed
+    if bull_setup
+        sim_entry := close
+        sim_sl    := ob_low - i_sl_buf * atr_val
+        risk = sim_entry - sim_sl
+        if risk > 0
+            sim_tp1     := sim_entry + 1.0 * risk
+            sim_tp2     := sim_entry + 2.0 * risk
+            sim_tp3     := sim_entry + 3.0 * risk
+            sim_eff_sl  := sim_sl
+            sim_long    := true
+            sim_tp1_done := false
+            sim_open_bar := bar_index
+            sim_count   += 1
+    else if bear_setup
+        sim_entry := close
+        sim_sl    := ob_high + i_sl_buf * atr_val
+        risk = sim_sl - sim_entry
+        if risk > 0
+            sim_tp1     := sim_entry - 1.0 * risk
+            sim_tp2     := sim_entry - 2.0 * risk
+            sim_tp3     := sim_entry - 3.0 * risk
+            sim_eff_sl  := sim_sl
+            sim_short   := true
+            sim_tp1_done := false
+            sim_open_bar := bar_index
+            sim_count   += 1
+
+// Detect TP1 fill
+if sim_long and not sim_tp1_done and high >= sim_tp1
+    sim_tp1_done := true
+    if i_move_be
+        sim_eff_sl := sim_entry
+if sim_short and not sim_tp1_done and low <= sim_tp1
+    sim_tp1_done := true
+    if i_move_be
+        sim_eff_sl := sim_entry
+
+// Detect close — TP3, SL, or BE
+finalize_sim(_won, _r) =>
+    sim_total_r += _r
+    if _won
+        sim_wins += 1
+    else
+        sim_losses += 1
+    sim_close_bar := bar_index
+
+if sim_long
+    if high >= sim_tp3
+        // All TPs filled (1/3 each + BE on remaining 2/3 means: TP1=+1R/3, TP2=+2R/3, TP3=+3R/3 = +2R blended)
+        finalize_sim(true, 2.0)
+        sim_long := false
+    else if low <= sim_eff_sl
+        r_realized = sim_tp1_done ? (i_move_be ? 1.0 / 3.0 : -1.0 / 3.0) : -1.0
+        finalize_sim(r_realized >= 0, r_realized)
+        sim_long := false
+
+if sim_short
+    if low <= sim_tp3
+        finalize_sim(true, 2.0)
+        sim_short := false
+    else if high >= sim_eff_sl
+        r_realized = sim_tp1_done ? (i_move_be ? 1.0 / 3.0 : -1.0 / 3.0) : -1.0
+        finalize_sim(r_realized >= 0, r_realized)
+        sim_short := false
+
+// =====================================================================
+// DRAWINGS — OB BOX
+// =====================================================================
+var box ob_box = na
+
+if i_draw_ob and (bull_bos or bear_bos) and not na(ob_bar)
+    if not na(ob_box)
+        box.delete(ob_box)
+    fill_clr = ob_demand ? i_col_ob_d : i_col_ob_s
+    bord_clr = ob_demand ? i_col_buy  : i_col_sell
+    ob_box := box.new(ob_bar, ob_high, bar_index + 30, ob_low,
+                      border_color = bord_clr,
+                      border_width = 1,
+                      bgcolor      = fill_clr)
+
+if i_draw_ob and not na(ob_box) and (sim_long or sim_short or active_bull_bos or active_bear_bos)
+    box.set_right(ob_box, bar_index + 30)
+
+if not sim_long and not sim_short and not active_bull_bos and not active_bear_bos and not na(ob_box)
+    box.delete(ob_box)
+    ob_box := na
+
+// =====================================================================
+// DRAWINGS — BOS ARROWS
+// =====================================================================
+plotshape(i_draw_bos and bull_bos, title="Bull BOS",
+          location=location.belowbar, style=shape.triangleup, color=i_col_buy,  size=size.small)
+plotshape(i_draw_bos and bear_bos, title="Bear BOS",
+          location=location.abovebar, style=shape.triangledown, color=i_col_sell, size=size.small)
+
+// =====================================================================
+// DRAWINGS — ENTRY / SL / TP LINES (sim position)
+// =====================================================================
+var line  ln_entry = na
+var line  ln_sl    = na
+var line  ln_tp1   = na
+var line  ln_tp2   = na
+var line  ln_tp3   = na
+var label lb_tp1   = na
+var label lb_tp2   = na
+var label lb_tp3   = na
+
+clear_levels() =>
+    if not na(ln_entry)
+        line.delete(ln_entry)
+    if not na(ln_sl)
+        line.delete(ln_sl)
+    if not na(ln_tp1)
+        line.delete(ln_tp1)
+    if not na(ln_tp2)
+        line.delete(ln_tp2)
+    if not na(ln_tp3)
+        line.delete(ln_tp3)
+    if not na(lb_tp1)
+        label.delete(lb_tp1)
+    if not na(lb_tp2)
+        label.delete(lb_tp2)
+    if not na(lb_tp3)
+        label.delete(lb_tp3)
+
+just_opened = (sim_long or sim_short) and (sim_long[1] == false and sim_short[1] == false)
+
+if i_draw_lvl and just_opened
+    clear_levels()
+    ln_entry := line.new(bar_index, sim_entry, bar_index + 40, sim_entry,
+                         color=color.new(color.gray, 30), style=line.style_dashed, width=1)
+    ln_sl    := line.new(bar_index, sim_sl, bar_index + 40, sim_sl,
+                         color=i_col_sell, style=line.style_solid, width=2)
+    ln_tp1   := line.new(bar_index, sim_tp1, bar_index + 40, sim_tp1,
+                         color=i_col_buy, style=line.style_solid, width=1)
+    ln_tp2   := line.new(bar_index, sim_tp2, bar_index + 40, sim_tp2,
+                         color=i_col_buy, style=line.style_solid, width=1)
+    ln_tp3   := line.new(bar_index, sim_tp3, bar_index + 40, sim_tp3,
+                         color=i_col_buy, style=line.style_solid, width=1)
+    if i_label_R
+        lb_tp1 := label.new(bar_index + 40, sim_tp1, "TP1 +1R",
+                            style=label.style_label_left, color=color.new(color.black, 70),
+                            textcolor=color.white, size=size.small)
+        lb_tp2 := label.new(bar_index + 40, sim_tp2, "TP2 +2R",
+                            style=label.style_label_left, color=color.new(color.black, 70),
+                            textcolor=color.white, size=size.small)
+        lb_tp3 := label.new(bar_index + 40, sim_tp3, "TP3 +3R",
+                            style=label.style_label_left, color=color.new(color.black, 70),
+                            textcolor=color.white, size=size.small)
+
+if i_draw_lvl and (sim_long or sim_short) and not na(ln_entry)
+    right_x = bar_index + 40
+    line.set_x2(ln_entry, right_x)
+    line.set_x2(ln_sl,    right_x)
+    line.set_x2(ln_tp1,   right_x)
+    line.set_x2(ln_tp2,   right_x)
+    line.set_x2(ln_tp3,   right_x)
+    line.set_y1(ln_sl, sim_eff_sl)
+    line.set_y2(ln_sl, sim_eff_sl)
+    line.set_color(ln_sl, sim_tp1_done ? i_col_be : i_col_sell)
+    if sim_tp1_done
+        line.set_color(ln_tp1, color.new(color.gray, 40))
+    if i_label_R and not na(lb_tp1)
+        label.set_x(lb_tp1, right_x)
+        label.set_x(lb_tp2, right_x)
+        label.set_x(lb_tp3, right_x)
+
+if not sim_long and not sim_short and not na(ln_entry)
+    clear_levels()
+    ln_entry := na
+    ln_sl    := na
+    ln_tp1   := na
+    ln_tp2   := na
+    ln_tp3   := na
+    lb_tp1   := na
+    lb_tp2   := na
+    lb_tp3   := na
+
+// =====================================================================
+// SESSION BOXES (Asia / London / NY-AM)
+// =====================================================================
+sess_label_size = i_sess_label_size == "huge" ? size.huge :
+                  i_sess_label_size == "large" ? size.large : size.normal
+
+in_asia   = not na(time(timeframe.period, i_asia_ses, i_sess_tz))
+in_london = not na(time(timeframe.period, i_lon_ses,  i_sess_tz))
+in_nyam   = not na(time(timeframe.period, i_ny_ses,   i_sess_tz))
+
+asia_start_now   = i_sess_on and in_asia   and not in_asia[1]
+asia_end_now     = i_sess_on and not in_asia   and in_asia[1]
+london_start_now = i_sess_on and in_london and not in_london[1]
+london_end_now   = i_sess_on and not in_london and in_london[1]
+nyam_start_now   = i_sess_on and in_nyam   and not in_nyam[1]
+nyam_end_now     = i_sess_on and not in_nyam   and in_nyam[1]
+
+// ---- Asia ----
+var box   as_box   = na
+var label as_lblM  = na
+var label as_lblH  = na
+var label as_lblL  = na
+var line  as_lnH   = na
+var line  as_lnL   = na
+var float as_hi    = na
+var float as_lo    = na
+var int   as_start = na
+
+if asia_start_now
+    if not na(as_box)
+        box.delete(as_box)
+    if not na(as_lblM)
+        label.delete(as_lblM)
+    if not na(as_lblH)
+        label.delete(as_lblH)
+    if not na(as_lblL)
+        label.delete(as_lblL)
+    if not na(as_lnH)
+        line.delete(as_lnH)
+    if not na(as_lnL)
+        line.delete(as_lnL)
+    as_hi    := high
+    as_lo    := low
+    as_start := bar_index
+    as_box   := box.new(bar_index, high, bar_index, low,
+                        border_color = i_col_asia_t,
+                        border_width = 1,
+                        bgcolor      = i_col_asia)
+    as_lblM  := label.new(bar_index, (high + low) / 2, "Asia",
+                          textcolor = i_col_asia_t,
+                          color     = color.new(color.black, 100),
+                          style     = label.style_none,
+                          size      = sess_label_size)
+
+if i_sess_on and in_asia and not na(as_box)
+    as_hi := math.max(as_hi, high)
+    as_lo := math.min(as_lo, low)
+    box.set_top(as_box, as_hi)
+    box.set_bottom(as_box, as_lo)
+    box.set_right(as_box, bar_index)
+    label.set_x(as_lblM, math.round((as_start + bar_index) / 2))
+    label.set_y(as_lblM, (as_hi + as_lo) / 2)
+
+if asia_end_now and not na(as_box)
+    if i_show_hl_lbl
+        as_lblH := label.new(as_start, as_hi, "AS.H",
+                             style     = label.style_none,
+                             textcolor = i_col_asia_t,
+                             color     = color.new(color.black, 100),
+                             size      = size.small)
+        as_lblL := label.new(as_start, as_lo, "AS.L",
+                             style     = label.style_none,
+                             textcolor = i_col_asia_t,
+                             color     = color.new(color.black, 100),
+                             size      = size.small)
+    if i_extend_hl
+        as_lnH := line.new(bar_index - 1, as_hi, bar_index, as_hi,
+                           color = i_col_asia_t, width = 1, extend = extend.right)
+        as_lnL := line.new(bar_index - 1, as_lo, bar_index, as_lo,
+                           color = i_col_asia_t, width = 1, extend = extend.right)
+
+// ---- London ----
+var box   lo_box   = na
+var label lo_lblM  = na
+var label lo_lblH  = na
+var label lo_lblL  = na
+var line  lo_lnH   = na
+var line  lo_lnL   = na
+var float lo_hi    = na
+var float lo_lo    = na
+var int   lo_start = na
+
+if london_start_now
+    if not na(lo_box)
+        box.delete(lo_box)
+    if not na(lo_lblM)
+        label.delete(lo_lblM)
+    if not na(lo_lblH)
+        label.delete(lo_lblH)
+    if not na(lo_lblL)
+        label.delete(lo_lblL)
+    if not na(lo_lnH)
+        line.delete(lo_lnH)
+    if not na(lo_lnL)
+        line.delete(lo_lnL)
+    lo_hi    := high
+    lo_lo    := low
+    lo_start := bar_index
+    lo_box   := box.new(bar_index, high, bar_index, low,
+                        border_color = i_col_lon_t,
+                        border_width = 1,
+                        bgcolor      = i_col_lon)
+    lo_lblM  := label.new(bar_index, (high + low) / 2, "London",
+                          textcolor = i_col_lon_t,
+                          color     = color.new(color.black, 100),
+                          style     = label.style_none,
+                          size      = sess_label_size)
+
+if i_sess_on and in_london and not na(lo_box)
+    lo_hi := math.max(lo_hi, high)
+    lo_lo := math.min(lo_lo, low)
+    box.set_top(lo_box, lo_hi)
+    box.set_bottom(lo_box, lo_lo)
+    box.set_right(lo_box, bar_index)
+    label.set_x(lo_lblM, math.round((lo_start + bar_index) / 2))
+    label.set_y(lo_lblM, (lo_hi + lo_lo) / 2)
+
+if london_end_now and not na(lo_box)
+    if i_show_hl_lbl
+        lo_lblH := label.new(lo_start, lo_hi, "LO.H",
+                             style     = label.style_none,
+                             textcolor = i_col_lon_t,
+                             color     = color.new(color.black, 100),
+                             size      = size.small)
+        lo_lblL := label.new(lo_start, lo_lo, "LO.L",
+                             style     = label.style_none,
+                             textcolor = i_col_lon_t,
+                             color     = color.new(color.black, 100),
+                             size      = size.small)
+    if i_extend_hl
+        lo_lnH := line.new(bar_index - 1, lo_hi, bar_index, lo_hi,
+                           color = i_col_lon_t, width = 1, extend = extend.right)
+        lo_lnL := line.new(bar_index - 1, lo_lo, bar_index, lo_lo,
+                           color = i_col_lon_t, width = 1, extend = extend.right)
+
+// ---- NY-AM ----
+var box   ny_box   = na
+var label ny_lblM  = na
+var label ny_lblH  = na
+var label ny_lblL  = na
+var line  ny_lnH   = na
+var line  ny_lnL   = na
+var float ny_hi    = na
+var float ny_lo    = na
+var int   ny_start = na
+
+if nyam_start_now
+    if not na(ny_box)
+        box.delete(ny_box)
+    if not na(ny_lblM)
+        label.delete(ny_lblM)
+    if not na(ny_lblH)
+        label.delete(ny_lblH)
+    if not na(ny_lblL)
+        label.delete(ny_lblL)
+    if not na(ny_lnH)
+        line.delete(ny_lnH)
+    if not na(ny_lnL)
+        line.delete(ny_lnL)
+    ny_hi    := high
+    ny_lo    := low
+    ny_start := bar_index
+    ny_box   := box.new(bar_index, high, bar_index, low,
+                        border_color = i_col_nyam_t,
+                        border_width = 1,
+                        bgcolor      = i_col_nyam)
+    ny_lblM  := label.new(bar_index, (high + low) / 2, "NYAM",
+                          textcolor = i_col_nyam_t,
+                          color     = color.new(color.black, 100),
+                          style     = label.style_none,
+                          size      = sess_label_size)
+
+if i_sess_on and in_nyam and not na(ny_box)
+    ny_hi := math.max(ny_hi, high)
+    ny_lo := math.min(ny_lo, low)
+    box.set_top(ny_box, ny_hi)
+    box.set_bottom(ny_box, ny_lo)
+    box.set_right(ny_box, bar_index)
+    label.set_x(ny_lblM, math.round((ny_start + bar_index) / 2))
+    label.set_y(ny_lblM, (ny_hi + ny_lo) / 2)
+
+if nyam_end_now and not na(ny_box)
+    if i_show_hl_lbl
+        ny_lblH := label.new(ny_start, ny_hi, "NYAM.H",
+                             style     = label.style_none,
+                             textcolor = i_col_nyam_t,
+                             color     = color.new(color.black, 100),
+                             size      = size.small)
+        ny_lblL := label.new(ny_start, ny_lo, "NYAM.L",
+                             style     = label.style_none,
+                             textcolor = i_col_nyam_t,
+                             color     = color.new(color.black, 100),
+                             size      = size.small)
+    if i_extend_hl
+        ny_lnH := line.new(bar_index - 1, ny_hi, bar_index, ny_hi,
+                           color = i_col_nyam_t, width = 1, extend = extend.right)
+        ny_lnL := line.new(bar_index - 1, ny_lo, bar_index, ny_lo,
+                           color = i_col_nyam_t, width = 1, extend = extend.right)
+
+// =====================================================================
+// STATUS TABLE
+// =====================================================================
+pos_lookup(s) =>
+    s == "top_left"     ? position.top_left     :
+    s == "top_right"    ? position.top_right    :
+    s == "middle_left"  ? position.middle_left  :
+    s == "middle_right" ? position.middle_right :
+    s == "bottom_left"  ? position.bottom_left  :
+                          position.bottom_right
+
+var table tbl = table.new(pos_lookup(i_tbl_pos), 2, 18,
+                          bgcolor      = color.new(color.black, 20),
+                          border_color = color.new(color.gray, 50),
+                          border_width = 1,
+                          frame_color  = color.new(color.gray, 50),
+                          frame_width  = 1)
+
+f_cell(_row, _col, _txt, _clr) =>
+    table.cell(tbl, _col, _row, _txt, text_color=_clr, text_size=size.small, text_halign=text.align_left)
+
+if i_show_tbl and barstate.islast
+    table.clear(tbl, 0, 0, 1, 17)
+
+    f_cell(0, 0, "MIGS HYBRID",     color.new(#ffd54f, 0))
+    f_cell(0, 1, "INDICATOR v6",    color.new(#ffd54f, 0))
+
+    state_str = sim_long  ? "IN-LONG (sim)"  :
+                sim_short ? "IN-SHORT (sim)" :
+                not cooldown_ok ? "COOLDOWN"  :
+                bull_setup or bear_setup ? "SETUP" : "READY"
+    state_clr = sim_long or sim_short ? #ffd54f :
+                bull_setup or bear_setup ? color.lime :
+                not cooldown_ok ? color.gray : color.silver
+    f_cell(1, 0, "State",       color.white)
+    f_cell(1, 1, state_str,     state_clr)
+
+    f_cell(2, 0, "Symbol",      color.white)
+    f_cell(2, 1, syminfo.ticker + " " + timeframe.period, color.white)
+
+    cur_sess = in_nyam   ? "NY-AM"  :
+               in_london ? "London" :
+               in_asia   ? "Asia"   : "off-session"
+    sess_clr = in_nyam   ? i_col_nyam_t :
+               in_london ? i_col_lon_t  :
+               in_asia   ? i_col_asia_t : color.silver
+    f_cell(3, 0, "Session",     color.white)
+    f_cell(3, 1, cur_sess,      sess_clr)
+
+    f_cell(4, 0, "1H Bias",     color.white)
+    f_cell(4, 1, h1_bias_s,     h1_bull ? color.lime : h1_bear ? color.red : color.silver)
+
+    adx_clr = i_adx_min > 0 and adx_val < i_adx_min ? color.red : color.lime
+    f_cell(5, 0, "ADX(" + i_adx_tf + ")", color.white)
+    f_cell(5, 1, str.tostring(adx_val, "0.0"), adx_clr)
+
+    atr_clr = i_atr_exp > 0 and atr_ratio < i_atr_exp ? color.red : color.lime
+    f_cell(6, 0, "ATR ratio",   color.white)
+    f_cell(6, 1, str.tostring(atr_ratio, "0.00"), atr_clr)
+
+    chop_now = chop_reason_bull != "" ? chop_reason_bull :
+               chop_reason_bear != "" ? chop_reason_bear : "OK"
+    f_cell(7, 0, "Chop",        color.white)
+    f_cell(7, 1, chop_now,      chop_now == "OK" ? color.lime : color.orange)
+
+    f_cell(8, 0, "Sim trades",  color.white)
+    f_cell(8, 1, str.tostring(sim_count) + "  W:" + str.tostring(sim_wins) +
+                 " L:" + str.tostring(sim_losses), color.white)
+
+    wr = sim_wins + sim_losses > 0 ? sim_wins * 100.0 / (sim_wins + sim_losses) : 0.0
+    f_cell(9, 0, "Sim WR",      color.white)
+    f_cell(9, 1, str.tostring(wr, "0.0") + "%",
+                 wr >= 40 ? color.lime : color.red)
+
+    f_cell(10, 0, "Sim total R", color.white)
+    f_cell(10, 1, str.tostring(sim_total_r, "+0.00") + "R",
+                  sim_total_r >= 0 ? color.lime : color.red)
+
+    f_cell(11, 0, "Day R",      color.white)
+    f_cell(11, 1, str.tostring(day_r_now, "+0.00") + "R",
+                  day_r_now >= 0 ? color.lime : color.red)
+
+    if sim_long or sim_short
+        f_cell(12, 0, "Dir",     color.white)
+        f_cell(12, 1, sim_long ? "BUY" : "SELL", sim_long ? color.lime : color.red)
+        f_cell(13, 0, "Entry",   color.white)
+        f_cell(13, 1, str.tostring(sim_entry, format.mintick), color.white)
+        f_cell(14, 0, "SL" + (sim_tp1_done ? " (BE)" : ""), color.white)
+        f_cell(14, 1, str.tostring(sim_eff_sl, format.mintick), sim_tp1_done ? i_col_be : color.red)
+        f_cell(15, 0, "TP1" + (sim_tp1_done ? " ✓" : ""), color.white)
+        f_cell(15, 1, str.tostring(sim_tp1, format.mintick), sim_tp1_done ? color.gray : color.lime)
+        f_cell(16, 0, "TP2",     color.white)
+        f_cell(16, 1, str.tostring(sim_tp2, format.mintick), color.lime)
+        f_cell(17, 0, "TP3",     color.white)
+        f_cell(17, 1, str.tostring(sim_tp3, format.mintick), color.lime)
+    else
+        f_cell(12, 0, "Last bull BOS", color.white)
+        f_cell(12, 1, na(last_bull_bos_b) ? "—" : str.tostring(bar_index - last_bull_bos_b) + " bars ago",
+                       color.silver)
+        f_cell(13, 0, "Last bear BOS", color.white)
+        f_cell(13, 1, na(last_bear_bos_b) ? "—" : str.tostring(bar_index - last_bear_bos_b) + " bars ago",
+                       color.silver)
+
+// =====================================================================
+// ALERTS
+// =====================================================================
+alertcondition(bull_setup, "Migs BUY setup", "Migs Hybrid: BUY setup detected")
+alertcondition(bear_setup, "Migs SELL setup", "Migs Hybrid: SELL setup detected")
+alertcondition(bull_bos,   "Bullish BOS",     "Bullish break of structure")
+alertcondition(bear_bos,   "Bearish BOS",     "Bearish break of structure")
+alertcondition(sim_long  and sim_long[1] == false,  "Sim LONG opened",  "Migs Hybrid: simulated LONG entry")
+alertcondition(sim_short and sim_short[1] == false, "Sim SHORT opened", "Migs Hybrid: simulated SHORT entry")
+
+// =====================================================================
+// DATA WINDOW PLOTS
+// =====================================================================
+plot(sim_long ? 1 : sim_short ? -1 : 0, "Position direction (sim)", color=color.new(color.white, 100), display=display.data_window)
+plot(sim_total_r, "Sim total R",        color=color.new(color.white, 100), display=display.data_window)
+plot(day_r_now,   "Day R",              color=color.new(color.white, 100), display=display.data_window)
+plot(adx_val,     "ADX",                color=color.new(color.white, 100), display=display.data_window)
+plot(atr_ratio,   "ATR ratio",          color=color.new(color.white, 100), display=display.data_window)
