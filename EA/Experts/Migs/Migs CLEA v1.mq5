@@ -61,6 +61,9 @@ input int              InpBOSConflictBars    = 40;     // M5 bars scanned for op
 input double           InpATRExpansionRatio  = 0.80;   // current ATR / ATR-MA must be >= this (0 = disable)
 input int              InpATRMAPeriod        = 50;     // bars in ATR moving average
 
+input group "=== Display Targets (informational, not gates) ==="
+input double InpTargetWinRate    = 0.70;     // aspirational WR shown on the panel (does NOT gate trades)
+
 input group "=== Trade Management ==="
 input int    InpMagic             = 20260522;
 input int    InpMaxConcurrent     = 1;         // max simultaneous Migs trade groups
@@ -86,11 +89,12 @@ input int              InpStatusXOffset    = 10;
 input int              InpStatusYOffset    = 20;
 input int              InpStatusFontSize   = 9;
 input string           InpStatusFontName   = "Consolas";
-input color            InpStatusColor      = clrWhite;
-input color            InpStatusHeaderClr  = clrGold;
-input color            InpStatusGoodClr    = clrLimeGreen;
-input color            InpStatusBadClr     = clrTomato;
-input color            InpStatusMutedClr   = clrSilver;
+input color            InpStatusColor      = clrBlack;       // body text (was clrWhite)
+input color            InpStatusHeaderClr  = clrBlack;       // headers / titles (was clrGold)
+input color            InpStatusGoodClr    = clrDarkGreen;   // positive state (was clrLimeGreen)
+input color            InpStatusBadClr     = clrFireBrick;   // negative state (was clrTomato)
+input color            InpStatusMutedClr   = clrDimGray;     // separators / muted (was clrSilver)
+input color            InpStatusWarnClr    = clrDarkOrange;  // live-account warning (was hardcoded clrOrange)
 
 //==================================================================//
 //  CONSTANTS                                                         //
@@ -194,6 +198,12 @@ string       g_last_eval_msg   = "(none)";
 datetime     g_status_redraw_t = 0;
 ENUM_BIAS    g_cached_bias_h1  = BIAS_RANGE;
 datetime     g_cached_bias_t   = 0;
+
+// Read-only running stats (panel display; do NOT gate trades)
+int          g_consec_losses     = 0;
+int          g_total_wins        = 0;
+int          g_total_losses      = 0;
+double       g_total_r           = 0.0;
 
 #define STATUS_PREFIX "MigsStatus_"
 
@@ -873,6 +883,19 @@ void FinalizeGroupIfClosed()
       MLog("RISK", StringFormat("Daily kill switch ON: %.2fR <= -%.1fR", g_day_r, InpDailyMaxLossR));
    }
 
+   // Read-only running stats for the panel — does NOT gate trades.
+   g_total_r += r_realized;
+   if(r_realized > 0.05)
+   {
+      g_total_wins++;
+      g_consec_losses = 0;
+   }
+   else if(r_realized < -0.5)  // treat -0.5R or worse as a loss; near-BE neither wins nor breaks streak
+   {
+      g_total_losses++;
+      g_consec_losses++;
+   }
+
    if(InpEnableJournal) UpdateCloseJournal(g_group.journal_id, r_realized, total_profit);
    MLog("TRADE", StringFormat("Group closed. P/L=%.2f  R=%.2f  day=%.2fR  MFE=%.2fR  MAE=%.2fR",
                                total_profit, r_realized, g_day_r, g_group.mfe_r, g_group.mae_r));
@@ -1119,7 +1142,7 @@ void DrawStatusPanel()
    StatusEnsureLabel("acct", 0, y,
       "Account  : " + (is_real ? "LIVE" : "DEMO") +
       "  #" + IntegerToString((long)AccountInfoInteger(ACCOUNT_LOGIN)),
-      is_real ? clrOrange : InpStatusColor);
+      is_real ? InpStatusWarnClr : InpStatusColor);
    y += line_h;
 
    // Equity
@@ -1232,6 +1255,23 @@ void DrawStatusPanel()
       StatusEnsureLabel("th", 0, y, "NO TRADE OPEN", InpStatusMutedClr);
       y += line_h;
    }
+
+   // Running WR vs target (informational — does NOT gate trades)
+   int decisive = g_total_wins + g_total_losses;
+   double live_wr = (decisive > 0) ? (double)g_total_wins / decisive : 0.0;
+   color wr_clr = (decisive == 0) ? InpStatusMutedClr
+                  : (live_wr >= InpTargetWinRate ? InpStatusGoodClr : InpStatusBadClr);
+   string wr_str = (decisive == 0)
+      ? StringFormat("WR       : 0/0   (target %.0f%%)", InpTargetWinRate * 100)
+      : StringFormat("WR       : %.0f%% (%d/%d, target %.0f%%, %+0.1fR)",
+                     live_wr * 100, g_total_wins, decisive, InpTargetWinRate * 100, g_total_r);
+   StatusEnsureLabel("wr", 0, y, wr_str, wr_clr);
+   y += line_h;
+
+   // Consecutive-loss counter (informational only — no halt)
+   StatusEnsureLabel("strk", 0, y,
+      StringFormat("Consec L : %d", g_consec_losses), InpStatusMutedClr);
+   y += line_h;
 
    // Chop filter status line
    if(InpEnableChopFilter)

@@ -96,9 +96,46 @@ i_col_asia_t = input.color(color.new(#5c9eff, 60), "Asia label/line",   group=g_
 i_col_lon_t  = input.color(color.new(#ff7a7a, 60), "London label/line", group=g_colors)
 i_col_nyam_t = input.color(color.new(#5fd6b3, 60), "NY-AM label/line",  group=g_colors)
 
+g_lvls      = "Key Levels — Auto"
+i_show_h1_bsl    = input.bool(true,  "1H BSL (swing high)",         group=g_lvls)
+i_show_h1_ssl    = input.bool(true,  "1H SSL / 1H swing low",       group=g_lvls)
+i_show_h14_ssl   = input.bool(true,  "1H/4H SSL (deeper)",          group=g_lvls)
+i_show_m15_bsl   = input.bool(true,  "15m BSL",                     group=g_lvls)
+i_show_m15_ssl   = input.bool(true,  "15m SSL",                     group=g_lvls)
+i_show_h1_ob     = input.bool(true,  "1H bearish OB",               group=g_lvls)
+i_show_h4_ob     = input.bool(true,  "4H bearish OB",               group=g_lvls)
+i_show_m15_ob    = input.bool(true,  "Provisional 15m OB",          group=g_lvls)
+i_show_asia_50   = input.bool(true,  "50% Asian range",             group=g_lvls)
+i_ob_height_atr  = input.float(0.30, "OB box height (× ATR)", minval=0.05, step=0.05, group=g_lvls)
+i_lvl_lookback   = input.int(300,    "Levels — max lookback bars",  minval=10, group=g_lvls)
+i_lvl_label_off  = input.int(8,      "Levels — label offset (bars)", minval=1, group=g_lvls)
+
+g_man       = "Key Levels — Manual (price; 0 = off)"
+i_thesis_kill_hi = input.price(0.0, "1H swing high — thesis kill",  group=g_man, confirm=false)
+i_swing_may19    = input.price(0.0, "1H swing high May 19",         group=g_man, confirm=false)
+i_choch_trigger  = input.price(0.0, "15m CHoCH trigger",            group=g_man, confirm=false)
+i_tp1            = input.price(0.0, "M15 SSL — TP1",                group=g_man, confirm=false)
+i_tp2_runner     = input.price(0.0, "TP2 runner",                   group=g_man, confirm=false)
+
+g_lvl_col   = "Key Level Colors"
+i_col_h1_lvl   = input.color(color.new(#ffa726, 0),  "1H levels",        group=g_lvl_col)
+i_col_h4_lvl   = input.color(color.new(#ef5350, 0),  "4H levels",        group=g_lvl_col)
+i_col_m15_lvl  = input.color(color.new(#ab47bc, 0),  "15m levels",       group=g_lvl_col)
+i_col_asia50   = input.color(color.new(#26c6da, 0),  "Asian 50%",        group=g_lvl_col)
+i_col_thesis   = input.color(color.new(#ff5252, 0),  "Thesis kill",      group=g_lvl_col)
+i_col_choch_l  = input.color(color.new(#ffeb3b, 0),  "CHoCH trigger",    group=g_lvl_col)
+i_col_tp       = input.color(color.new(#66bb6a, 0),  "TP levels",        group=g_lvl_col)
+i_col_h1_ob    = input.color(color.new(#ef5350, 78), "1H OB fill",       group=g_lvl_col)
+i_col_h4_ob    = input.color(color.new(#d32f2f, 78), "4H OB fill",       group=g_lvl_col)
+i_col_m15_ob   = input.color(color.new(#7e57c2, 78), "15m OB fill",      group=g_lvl_col)
+
 // =====================================================================
 // INDICATORS
 // =====================================================================
+calc_adx(_period) =>
+    [_pdi, _mdi, _adx] = ta.dmi(_period, _period)
+    _adx
+
 atr_val    = ta.atr(i_atr_per)
 atr_ma_val = ta.sma(atr_val, i_atr_ma)
 atr_ratio  = atr_ma_val > 0 ? atr_val / atr_ma_val : 1.0
@@ -110,7 +147,21 @@ h1_bull  = h1_fast > h1_slow and h1_close > h1_fast
 h1_bear  = h1_fast < h1_slow and h1_close < h1_fast
 h1_bias_s = h1_bull ? "bullish" : h1_bear ? "bearish" : "ranging"
 
-adx_val  = request.security(syminfo.tickerid, i_adx_tf, ta.adx(i_adx_per), barmerge.gaps_off, barmerge.lookahead_off)
+adx_val  = request.security(syminfo.tickerid, i_adx_tf, calc_adx(i_adx_per), barmerge.gaps_off, barmerge.lookahead_off)
+
+// Multi-TF data for Key Levels — bundled to stay under request.security quota.
+// Use [1] + lookahead_on so the values are confirmed (non-repaint).
+[h1l_ph, h1l_pl] = request.security(syminfo.tickerid, "60",
+     [ta.pivothigh(2, 2)[1], ta.pivotlow(2, 2)[1]],
+     barmerge.gaps_off, barmerge.lookahead_on)
+
+[h4l_ph, h4l_pl] = request.security(syminfo.tickerid, "240",
+     [ta.pivothigh(2, 2)[1], ta.pivotlow(2, 2)[1]],
+     barmerge.gaps_off, barmerge.lookahead_on)
+
+[m15l_ph, m15l_pl] = request.security(syminfo.tickerid, "15",
+     [ta.pivothigh(2, 2)[1], ta.pivotlow(2, 2)[1]],
+     barmerge.gaps_off, barmerge.lookahead_on)
 
 // =====================================================================
 // STRUCTURE — SWINGS / BOS / OB
@@ -155,10 +206,10 @@ if active_bull_bos and (bar_index - bos_bar) > i_bos_age
 if active_bear_bos and (bar_index - bos_bar) > i_bos_age
     active_bear_bos := false
 
-var float ob_high = na
-var float ob_low  = na
-var int   ob_bar  = na
-var bool  ob_demand = na
+var float ob_high   = na
+var float ob_low    = na
+var int   ob_bar    = na
+var bool  ob_demand = false
 
 if bull_bos
     ob_high := na
@@ -214,8 +265,8 @@ if i_chop_on
 // =====================================================================
 // SETUP DETECTION
 // =====================================================================
-have_ob_bull = active_bull_bos and not na(ob_high) and ob_demand == true
-have_ob_bear = active_bear_bos and not na(ob_low)  and ob_demand == false
+have_ob_bull = active_bull_bos and not na(ob_high) and ob_demand
+have_ob_bear = active_bear_bos and not na(ob_low)  and not ob_demand
 
 dist_bull = have_ob_bull ? (close > ob_high ? close - ob_high : 0.0) : na
 dist_bear = have_ob_bear ? (close < ob_low  ? ob_low  - close : 0.0) : na
@@ -260,36 +311,34 @@ day_r_now = sim_total_r - day_r_anchor
 cooldown_ok = na(sim_close_bar) or (bar_index - sim_close_bar) >= i_cooldown
 sim_idle    = not sim_long and not sim_short
 
-// Open simulated position
 if i_sim_on and sim_idle and cooldown_ok and barstate.isconfirmed
     if bull_setup
         sim_entry := close
         sim_sl    := ob_low - i_sl_buf * atr_val
         risk = sim_entry - sim_sl
         if risk > 0
-            sim_tp1     := sim_entry + 1.0 * risk
-            sim_tp2     := sim_entry + 2.0 * risk
-            sim_tp3     := sim_entry + 3.0 * risk
-            sim_eff_sl  := sim_sl
-            sim_long    := true
+            sim_tp1      := sim_entry + 1.0 * risk
+            sim_tp2      := sim_entry + 2.0 * risk
+            sim_tp3      := sim_entry + 3.0 * risk
+            sim_eff_sl   := sim_sl
+            sim_long     := true
             sim_tp1_done := false
             sim_open_bar := bar_index
-            sim_count   += 1
+            sim_count    += 1
     else if bear_setup
         sim_entry := close
         sim_sl    := ob_high + i_sl_buf * atr_val
         risk = sim_sl - sim_entry
         if risk > 0
-            sim_tp1     := sim_entry - 1.0 * risk
-            sim_tp2     := sim_entry - 2.0 * risk
-            sim_tp3     := sim_entry - 3.0 * risk
-            sim_eff_sl  := sim_sl
-            sim_short   := true
+            sim_tp1      := sim_entry - 1.0 * risk
+            sim_tp2      := sim_entry - 2.0 * risk
+            sim_tp3      := sim_entry - 3.0 * risk
+            sim_eff_sl   := sim_sl
+            sim_short    := true
             sim_tp1_done := false
             sim_open_bar := bar_index
-            sim_count   += 1
+            sim_count    += 1
 
-// Detect TP1 fill
 if sim_long and not sim_tp1_done and high >= sim_tp1
     sim_tp1_done := true
     if i_move_be
@@ -299,33 +348,41 @@ if sim_short and not sim_tp1_done and low <= sim_tp1
     if i_move_be
         sim_eff_sl := sim_entry
 
-// Detect close — TP3, SL, or BE
-finalize_sim(_won, _r) =>
-    sim_total_r += _r
-    if _won
-        sim_wins += 1
-    else
-        sim_losses += 1
-    sim_close_bar := bar_index
+// Finalization is inlined per Pine v6 rule: user-defined functions cannot
+// modify global-scope variables (CE10088). Each branch updates totals
+// directly in global scope.
 
 if sim_long
     if high >= sim_tp3
-        // All TPs filled (1/3 each + BE on remaining 2/3 means: TP1=+1R/3, TP2=+2R/3, TP3=+3R/3 = +2R blended)
-        finalize_sim(true, 2.0)
-        sim_long := false
+        sim_total_r   += 2.0
+        sim_wins      += 1
+        sim_close_bar := bar_index
+        sim_long      := false
     else if low <= sim_eff_sl
         r_realized = sim_tp1_done ? (i_move_be ? 1.0 / 3.0 : -1.0 / 3.0) : -1.0
-        finalize_sim(r_realized >= 0, r_realized)
-        sim_long := false
+        sim_total_r += r_realized
+        if r_realized >= 0
+            sim_wins += 1
+        else
+            sim_losses += 1
+        sim_close_bar := bar_index
+        sim_long      := false
 
 if sim_short
     if low <= sim_tp3
-        finalize_sim(true, 2.0)
-        sim_short := false
+        sim_total_r   += 2.0
+        sim_wins      += 1
+        sim_close_bar := bar_index
+        sim_short     := false
     else if high >= sim_eff_sl
         r_realized = sim_tp1_done ? (i_move_be ? 1.0 / 3.0 : -1.0 / 3.0) : -1.0
-        finalize_sim(r_realized >= 0, r_realized)
-        sim_short := false
+        sim_total_r += r_realized
+        if r_realized >= 0
+            sim_wins += 1
+        else
+            sim_losses += 1
+        sim_close_bar := bar_index
+        sim_short     := false
 
 // =====================================================================
 // DRAWINGS — OB BOX
@@ -650,15 +707,183 @@ if nyam_end_now and not na(ny_box)
                            color = i_col_nyam_t, width = 1, extend = extend.right)
 
 // =====================================================================
+// MULTI-TF KEY LEVELS — pivots + bearish OBs + manual lines
+// =====================================================================
+
+// --- Track latest pivots per TF ---
+var float l_h1_sh    = na
+var int   l_h1_sh_b  = na
+var float l_h1_sl    = na
+var int   l_h1_sl_b  = na
+
+if not na(h1l_ph)
+    l_h1_sh   := h1l_ph
+    l_h1_sh_b := bar_index
+if not na(h1l_pl)
+    l_h1_sl   := h1l_pl
+    l_h1_sl_b := bar_index
+
+var float l_h4_sh    = na
+var int   l_h4_sh_b  = na
+var float l_h4_sl    = na
+var int   l_h4_sl_b  = na
+
+if not na(h4l_ph)
+    l_h4_sh   := h4l_ph
+    l_h4_sh_b := bar_index
+if not na(h4l_pl)
+    l_h4_sl   := h4l_pl
+    l_h4_sl_b := bar_index
+
+var float l_m15_sh   = na
+var int   l_m15_sh_b = na
+var float l_m15_sl   = na
+var int   l_m15_sl_b = na
+
+if not na(m15l_ph)
+    l_m15_sh   := m15l_ph
+    l_m15_sh_b := bar_index
+if not na(m15l_pl)
+    l_m15_sl   := m15l_pl
+    l_m15_sl_b := bar_index
+
+// --- 1H/4H deep SSL = the lower of the two ---
+deep_ssl   = na(l_h1_sl) ? l_h4_sl : (na(l_h4_sl) ? l_h1_sl : math.min(l_h1_sl, l_h4_sl))
+deep_ssl_b = (not na(l_h4_sl) and (na(l_h1_sl) or l_h4_sl <= l_h1_sl)) ? l_h4_sl_b : l_h1_sl_b
+
+// --- 50% Asian range (reuses as_hi/as_lo from session boxes section) ---
+asia_50    = (not na(as_hi) and not na(as_lo)) ? (as_hi + as_lo) / 2 : na
+asia_50_b  = na(as_start) ? bar_index - 100 : as_start
+
+// --- Bearish OBs (approximation: swing-high price ± ATR-scaled height) ---
+ob_h = i_ob_height_atr * atr_val
+
+// --- Drawing helpers (chart side effects only — no global var mutation per CE10088) ---
+f_lvl(line prev_ln, label prev_lbl, float price, int start_bar,
+      bool enabled, string txt, color clr) =>
+    if not na(prev_ln)
+        line.delete(prev_ln)
+    if not na(prev_lbl)
+        label.delete(prev_lbl)
+    line  ln  = na
+    label lbl = na
+    if enabled and not na(price)
+        sx = na(start_bar) ? bar_index - math.min(i_lvl_lookback, bar_index - 1) : start_bar
+        ln  := line.new(sx, price, bar_index, price,
+                         color = clr, width = 1, extend = extend.right)
+        lbl := label.new(bar_index + i_lvl_label_off, price, txt,
+                          style     = label.style_label_left,
+                          color     = color.new(clr, 70),
+                          textcolor = color.white,
+                          size      = size.small)
+    [ln, lbl]
+
+f_ob(box prev_bx, label prev_lbl, float top, float bot, int start_bar,
+     bool enabled, string txt, color bord_clr, color fill_clr) =>
+    if not na(prev_bx)
+        box.delete(prev_bx)
+    if not na(prev_lbl)
+        label.delete(prev_lbl)
+    box   bx  = na
+    label lbl = na
+    if enabled and not na(top) and not na(bot)
+        sx = na(start_bar) ? bar_index - math.min(i_lvl_lookback, bar_index - 1) : start_bar
+        bx  := box.new(sx, top, bar_index + i_lvl_label_off, bot,
+                        border_color = bord_clr,
+                        border_width = 1,
+                        bgcolor      = fill_clr,
+                        extend       = extend.right)
+        lbl := label.new(bar_index + i_lvl_label_off, (top + bot) / 2, txt,
+                          style     = label.style_label_left,
+                          color     = color.new(bord_clr, 70),
+                          textcolor = color.white,
+                          size      = size.small)
+    [bx, lbl]
+
+// --- Persistent drawing references ---
+var line  ln_h1_bsl     = na
+var label lbl_h1_bsl    = na
+var line  ln_h1_ssl     = na
+var label lbl_h1_ssl    = na
+var line  ln_h14_ssl    = na
+var label lbl_h14_ssl   = na
+var line  ln_m15_bsl    = na
+var label lbl_m15_bsl   = na
+var line  ln_m15_ssl    = na
+var label lbl_m15_ssl   = na
+var line  ln_asia50     = na
+var label lbl_asia50    = na
+
+var box   bx_h1_ob      = na
+var label lbl_h1_ob     = na
+var box   bx_h4_ob      = na
+var label lbl_h4_ob     = na
+var box   bx_m15_ob     = na
+var label lbl_m15_ob    = na
+
+var line  ln_thesis     = na
+var label lbl_thesis    = na
+var line  ln_may19      = na
+var label lbl_may19     = na
+var line  ln_choch      = na
+var label lbl_choch     = na
+var line  ln_tp1        = na
+var label lbl_tp1       = na
+var line  ln_tp2        = na
+var label lbl_tp2       = na
+
+// --- Redraw each confirmed bar (keeps right edge anchored to the chart) ---
+if barstate.isconfirmed or barstate.islast
+    // Auto-detected horizontal levels
+    [ln_h1_bsl,   lbl_h1_bsl]   := f_lvl(ln_h1_bsl,   lbl_h1_bsl,
+         l_h1_sh,  l_h1_sh_b,  i_show_h1_bsl,  "1H BSL",                i_col_h1_lvl)
+    [ln_h1_ssl,   lbl_h1_ssl]   := f_lvl(ln_h1_ssl,   lbl_h1_ssl,
+         l_h1_sl,  l_h1_sl_b,  i_show_h1_ssl,  "1H SSL / swing low",    i_col_h1_lvl)
+    [ln_h14_ssl,  lbl_h14_ssl]  := f_lvl(ln_h14_ssl,  lbl_h14_ssl,
+         deep_ssl, deep_ssl_b, i_show_h14_ssl, "1H/4H SSL",             i_col_h4_lvl)
+    [ln_m15_bsl,  lbl_m15_bsl]  := f_lvl(ln_m15_bsl,  lbl_m15_bsl,
+         l_m15_sh, l_m15_sh_b, i_show_m15_bsl, "15m BSL",               i_col_m15_lvl)
+    [ln_m15_ssl,  lbl_m15_ssl]  := f_lvl(ln_m15_ssl,  lbl_m15_ssl,
+         l_m15_sl, l_m15_sl_b, i_show_m15_ssl, "15m SSL",               i_col_m15_lvl)
+    [ln_asia50,   lbl_asia50]   := f_lvl(ln_asia50,   lbl_asia50,
+         asia_50,  asia_50_b,  i_show_asia_50, "50% Asian range",       i_col_asia50)
+
+    // Bearish OB boxes
+    [bx_h1_ob,    lbl_h1_ob]    := f_ob(bx_h1_ob,  lbl_h1_ob,
+         l_h1_sh,  l_h1_sh - ob_h,  l_h1_sh_b,  i_show_h1_ob,  "1H bearish OB",       i_col_h1_lvl, i_col_h1_ob)
+    [bx_h4_ob,    lbl_h4_ob]    := f_ob(bx_h4_ob,  lbl_h4_ob,
+         l_h4_sh,  l_h4_sh - ob_h*1.5, l_h4_sh_b,  i_show_h4_ob,  "4H bearish OB",   i_col_h4_lvl, i_col_h4_ob)
+    [bx_m15_ob,   lbl_m15_ob]   := f_ob(bx_m15_ob, lbl_m15_ob,
+         l_m15_sh, l_m15_sh - ob_h*0.7, l_m15_sh_b, i_show_m15_ob, "Provisional 15m OB", i_col_m15_lvl, i_col_m15_ob)
+
+    // Manual price levels (price == 0 means "off")
+    [ln_thesis,   lbl_thesis]   := f_lvl(ln_thesis,   lbl_thesis,
+         i_thesis_kill_hi > 0 ? i_thesis_kill_hi : na, na,
+         i_thesis_kill_hi > 0, "1H swing high — thesis kill", i_col_thesis)
+    [ln_may19,    lbl_may19]    := f_lvl(ln_may19,    lbl_may19,
+         i_swing_may19    > 0 ? i_swing_may19    : na, na,
+         i_swing_may19    > 0, "1H swing high May 19",         i_col_h1_lvl)
+    [ln_choch,    lbl_choch]    := f_lvl(ln_choch,    lbl_choch,
+         i_choch_trigger  > 0 ? i_choch_trigger  : na, na,
+         i_choch_trigger  > 0, "15m CHoCH trigger",            i_col_choch_l)
+    [ln_tp1,      lbl_tp1]      := f_lvl(ln_tp1,      lbl_tp1,
+         i_tp1            > 0 ? i_tp1            : na, na,
+         i_tp1            > 0, "M15 SSL — TP1",                i_col_tp)
+    [ln_tp2,      lbl_tp2]      := f_lvl(ln_tp2,      lbl_tp2,
+         i_tp2_runner     > 0 ? i_tp2_runner     : na, na,
+         i_tp2_runner     > 0, "TP2 runner",                   i_col_tp)
+
+// =====================================================================
 // STATUS TABLE
 // =====================================================================
 pos_lookup(s) =>
-    s == "top_left"     ? position.top_left     :
-    s == "top_right"    ? position.top_right    :
-    s == "middle_left"  ? position.middle_left  :
-    s == "middle_right" ? position.middle_right :
-    s == "bottom_left"  ? position.bottom_left  :
-                          position.bottom_right
+    switch s
+        "top_left"     => position.top_left
+        "top_right"    => position.top_right
+        "middle_left"  => position.middle_left
+        "middle_right" => position.middle_right
+        "bottom_left"  => position.bottom_left
+        => position.bottom_right
 
 var table tbl = table.new(pos_lookup(i_tbl_pos), 2, 18,
                           bgcolor      = color.new(color.black, 20),
@@ -676,13 +901,17 @@ if i_show_tbl and barstate.islast
     f_cell(0, 0, "MIGS HYBRID",     color.new(#ffd54f, 0))
     f_cell(0, 1, "INDICATOR v6",    color.new(#ffd54f, 0))
 
-    state_str = sim_long  ? "IN-LONG (sim)"  :
-                sim_short ? "IN-SHORT (sim)" :
-                not cooldown_ok ? "COOLDOWN"  :
-                bull_setup or bear_setup ? "SETUP" : "READY"
-    state_clr = sim_long or sim_short ? #ffd54f :
-                bull_setup or bear_setup ? color.lime :
-                not cooldown_ok ? color.gray : color.silver
+    state_str = switch
+        sim_long                  => "IN-LONG (sim)"
+        sim_short                 => "IN-SHORT (sim)"
+        not cooldown_ok           => "COOLDOWN"
+        bull_setup or bear_setup  => "SETUP"
+        =>                           "READY"
+    state_clr = switch
+        sim_long or sim_short     => color.new(#ffd54f, 0)
+        bull_setup or bear_setup  => color.lime
+        not cooldown_ok           => color.gray
+        =>                           color.silver
     f_cell(1, 0, "State",       color.white)
     f_cell(1, 1, state_str,     state_clr)
 
