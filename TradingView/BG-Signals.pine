@@ -119,6 +119,12 @@ i_tbl_pos   = input.string("top_right", "Table position",
                            options=["top_left","top_right","middle_left","middle_right","bottom_left","bottom_right"], group=g_disp)
 i_lbl_off   = input.int(15, "Label offset (bars right)",          minval=1, group=g_disp)
 
+g_sug       = "Tuning Suggestions"
+i_show_sug  = input.bool(true,  "Show tuning suggestions panel",  group=g_sug,
+     tooltip="Shows a live comparison of your current settings vs. suggested values for the chosen Signal TF. Cells turn orange when your value differs from the suggestion, green when they match. Updates whenever you change Signal timeframe.")
+i_sug_pos   = input.string("bottom_left", "Suggestions panel position",
+                           options=["top_left","top_right","middle_left","middle_right","bottom_left","bottom_right"], group=g_sug)
+
 g_colors    = "Colors"
 i_col_buy   = input.color(color.new(#26a69a, 0),  "Buy / TP accent",  group=g_colors)
 i_col_sell  = input.color(color.new(#ef5350, 0),  "Sell / SL accent", group=g_colors)
@@ -209,6 +215,69 @@ type SigState
     bool   evt_close_short_sl = false
     // Latest event's trail step (for SL label retext): 0=none, 1=BE, 2=TP1, 3=TP2
     int    evt_trail_step     = 0
+
+// =====================================================================
+// SUGGESTIONS UDT + lookup function. Holds the per-TF starting-point
+// values displayed in the tuning suggestions panel. Reading these on
+// every barstate.islast tick means the panel updates live whenever the
+// user changes the Signal TF input — Pine inputs can't carry dynamic
+// labels themselves, so we render the comparison on-chart instead.
+// =====================================================================
+type Suggestions
+    int   swing_len    = 2
+    int   bos_age      = 30
+    int   ob_age       = 60
+    float entry_atr    = 0.5
+    int   atr_per      = 14
+    float sl_buf       = 0.1
+    float min_sl       = 7.0
+    float min_sl_flt   = 5.0
+    int   atr_ma       = 50
+    int   cooldown     = 6
+    int   max_pos      = 2
+
+get_suggestions(string tf) =>
+    Suggestions s = Suggestions.new()
+    // Defaults above match the 5m baseline. Only overrides per TF below.
+    if tf == "1"
+        s.swing_len  := 3
+        s.bos_age    := 150
+        s.ob_age     := 300
+        s.entry_atr  := 0.3
+        s.atr_per    := 50
+        s.sl_buf     := 0.1
+        s.min_sl     := 5.0
+        s.min_sl_flt := 3.0
+        s.cooldown   := 30
+        s.max_pos    := 3
+    else if tf == "15"
+        s.entry_atr  := 0.7
+        s.bos_age    := 20
+        s.ob_age     := 40
+        s.sl_buf     := 0.15
+        s.min_sl     := 10.0
+        s.min_sl_flt := 7.0
+        s.cooldown   := 4
+        s.max_pos    := 2
+    else if tf == "30"
+        s.entry_atr  := 0.7
+        s.bos_age    := 15
+        s.ob_age     := 30
+        s.sl_buf     := 0.15
+        s.min_sl     := 15.0
+        s.min_sl_flt := 10.0
+        s.cooldown   := 3
+        s.max_pos    := 1
+    else if tf == "60"
+        s.entry_atr  := 0.7
+        s.bos_age    := 10
+        s.ob_age     := 25
+        s.sl_buf     := 0.2
+        s.min_sl     := 25.0
+        s.min_sl_flt := 15.0
+        s.cooldown   := 2
+        s.max_pos    := 1
+    s
 
 // =====================================================================
 // HELPER — ADX wrapper (ta.adx doesn't exist in v6; use ta.dmi tuple)
@@ -984,6 +1053,65 @@ if i_show_tbl and barstate.islast
         f_cell(17, 1, str.tostring(sim_tp1, format.mintick), sim_tp1_done ? color.gray : color.lime)
         f_cell(18, 0, final_tp_lbl + " (final)", color.white)
         f_cell(18, 1, str.tostring(final_tp_price, format.mintick), color.lime)
+
+// =====================================================================
+// TUNING SUGGESTIONS PANEL
+// Live comparison of your current settings vs the suggested values for
+// the chosen Signal TF. Three columns: param name | suggested | your
+// current value (orange when they differ, gray ✓ when they match).
+// Updates whenever the Signal TF input changes.
+// =====================================================================
+var table sug_tbl = table.new(pos_lookup(i_sug_pos), 3, 12,
+                              bgcolor      = color.new(color.black, 20),
+                              border_color = color.new(color.gray, 50),
+                              border_width = 1,
+                              frame_color  = color.new(color.gray, 50),
+                              frame_width  = 1)
+
+f_sug_hdr(int _r, string _name, string _sug_v, string _cur_v) =>
+    table.cell(sug_tbl, 0, _r, _name,   text_color=color.new(#ffd54f, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(sug_tbl, 1, _r, _sug_v,  text_color=color.new(#ffd54f, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(sug_tbl, 2, _r, _cur_v,  text_color=color.new(#ffd54f, 0), text_size=size.small, text_halign=text.align_left)
+
+f_sug_row(int _r, string _name, string _sug_v, string _cur_v, bool _match) =>
+    table.cell(sug_tbl, 0, _r, _name, text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.cell(sug_tbl, 1, _r, _sug_v, text_color=color.lime, text_size=size.small, text_halign=text.align_left)
+    table.cell(sug_tbl, 2, _r, _cur_v + (_match ? "  ✓" : ""),
+                                       text_color=_match ? color.gray : color.orange,
+                                       text_size=size.small, text_halign=text.align_left)
+
+// Float comparison tolerance — Pine floats from input can drift slightly.
+float_eq(float _a, float _b) => math.abs(_a - _b) < 0.005
+
+if i_show_sug and barstate.islast
+    table.clear(sug_tbl, 0, 0, 2, 11)
+    Suggestions sug = get_suggestions(sig_tf)
+
+    sug_tf_label = "SUGGESTED · " + sig_tf + " sig"
+    f_sug_hdr(0, sug_tf_label, "sug", "you")
+
+    f_sug_row(1,  "Swing strength",   str.tostring(sug.swing_len),
+                                       str.tostring(i_swing_len),  i_swing_len == sug.swing_len)
+    f_sug_row(2,  "Max BOS age",      str.tostring(sug.bos_age),
+                                       str.tostring(i_bos_age),    i_bos_age == sug.bos_age)
+    f_sug_row(3,  "Max OB lookback",  str.tostring(sug.ob_age),
+                                       str.tostring(i_ob_age),     i_ob_age == sug.ob_age)
+    f_sug_row(4,  "Entry × ATR",      str.tostring(sug.entry_atr, "0.0"),
+                                       str.tostring(i_entry_atr, "0.0"), float_eq(i_entry_atr, sug.entry_atr))
+    f_sug_row(5,  "ATR period",       str.tostring(sug.atr_per),
+                                       str.tostring(i_atr_per),    i_atr_per == sug.atr_per)
+    f_sug_row(6,  "SL buf × ATR",     str.tostring(sug.sl_buf, "0.00"),
+                                       str.tostring(i_sl_buf, "0.00"), float_eq(i_sl_buf, sug.sl_buf))
+    f_sug_row(7,  "Min SL clamp $",   str.tostring(sug.min_sl, "0.0"),
+                                       str.tostring(i_min_sl, "0.0"),  float_eq(i_min_sl, sug.min_sl))
+    f_sug_row(8,  "Min SL filter $",  str.tostring(sug.min_sl_flt, "0.0"),
+                                       str.tostring(i_min_sl_flt, "0.0"), float_eq(i_min_sl_flt, sug.min_sl_flt))
+    f_sug_row(9,  "ATR MA period",    str.tostring(sug.atr_ma),
+                                       str.tostring(i_atr_ma),     i_atr_ma == sug.atr_ma)
+    f_sug_row(10, "Cooldown bars",    str.tostring(sug.cooldown),
+                                       str.tostring(i_cooldown),   i_cooldown == sug.cooldown)
+    f_sug_row(11, "Max positions",    str.tostring(sug.max_pos),
+                                       str.tostring(i_max_pos),    i_max_pos == sug.max_pos)
 
 // =====================================================================
 // ALERTS
