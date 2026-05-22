@@ -893,15 +893,17 @@ if just_opened_short
               size      = size.small)
 
 // Per-trade drawings. Singleton vars hold the LATEST opened active
-// trade's lines/chips. On each new entry, OLD chips and OLD horizontal
-// lines are deleted before fresh ones are created, so only the latest
-// trade's right-edge chips ever appear. Older trades' entry labels +
-// vertical entry lines stay on the chart as historical markers.
+// trade's lines/chips. The latest trade's chips track the chart's right
+// edge for live read-off; when a new trade opens, the previous trade's
+// chips get SNAPPED BACK to their entry-bar position (so they don't pile
+// up at the right edge as a confusing mid-chart cluster) and the new
+// trade takes over right-edge tracking. Horizontal lines are similarly
+// frozen at the previous trade's last-extended bar.
 //
-// Horizontal SL/TP lines use line.new (per trade, drawn from entry bar
-// extending to current bar while active, frozen at close_bar afterward).
-// This replaces the prior plot()-based approach, which stair-stepped
-// between trades when the displayed trade switched mid-flight.
+// Each trade ends up with chips visible near its own entry candle,
+// spaced apart on the x-axis by trade-entry bar — no overlap, no
+// orphaned chips floating mid-chart.
+var int   prev_entry_bar = na
 var line  ln_v_tp = na
 var line  ln_v_sl = na
 var line  ln_h_sl  = na
@@ -914,17 +916,20 @@ var label lbl_tp2 = na
 var label lbl_tp3 = na
 
 if just_opened_long or just_opened_short
-    // Neither chips nor horizontal lines are deleted on entry. The var
-    // refs (lbl_sl, ln_h_sl, etc.) get overwritten by the new label/line
-    // objects below, so the prior trade's drawings become orphaned — but
-    // they remain on the chart at their last position, carrying their
-    // own SL/TP prices and horizontal line segments as historical
-    // reference. This is the multi-position visualization the user
-    // wants: every trade keeps its own chips + line set.
-    //
-    // Trade-off: older trades' chips freeze at the bar just before the
-    // next entry (not their actual close bar) because we lose the var
-    // ref. Acceptable — the price labels stay readable on the chart.
+    // Snap the previous trade's chips back to its entry-bar offset so
+    // they sit near that trade's entry candle as a clean historical
+    // marker — instead of getting stranded mid-chart at wherever the
+    // right-edge tracking last left them.
+    if not na(prev_entry_bar)
+        if not na(lbl_sl)
+            label.set_x(lbl_sl,  prev_entry_bar + i_lbl_off)
+        if not na(lbl_tp1)
+            label.set_x(lbl_tp1, prev_entry_bar + i_lbl_off)
+        if not na(lbl_tp2)
+            label.set_x(lbl_tp2, prev_entry_bar + i_lbl_off)
+        if not na(lbl_tp3)
+            label.set_x(lbl_tp3, prev_entry_bar + i_lbl_off)
+    prev_entry_bar := bar_index
 
     // Vertical dashed entry lines (entry → TP, entry → SL). Per-entry
     // historical markers — not deleted on subsequent entries.
