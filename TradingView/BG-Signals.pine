@@ -18,6 +18,14 @@
 //    The full pipeline (BOS / OB / chop / setup / sim) is wrapped in a
 //    function and pulled via request.security on a configurable TF, so you
 //    can view a 15m chart and trade 1m signals. See `i_sig_tf` input.
+//
+//  Multi-position:
+//    `i_max_positions` controls how many concurrent sim trades the script
+//    will hold open. When > 1, each fresh setup that passes filters opens
+//    its own trade; aggregate stats (count, R, WR) accumulate across all.
+//    Visualization follows the MOST RECENTLY OPENED active trade only —
+//    older trades remain on the chart as their entry labels but their live
+//    SL/TP lines aren't tracked.
 // =====================================================================
 //@version=6
 
@@ -33,14 +41,22 @@ indicator("BG Signals",
 g_struct    = "Structure Detection"
 i_sig_tf    = input.timeframe("", "Signal timeframe (empty = chart TF)", group=g_struct,
      tooltip="Run the full signal + sim pipeline on this timeframe regardless of the chart's TF. e.g., set to \"1\" to compute 1-minute signals while viewing a 15m chart. Empty = chart TF. When sig TF is lower than chart TF, trades that open AND close inside a single chart bar may not render visually, but sim stats accumulate correctly on the sig TF.")
-i_swing_len = input.int(1,    "Swing pivot strength (bars L/R)", minval=1, group=g_struct)
-i_bos_age   = input.int(30,   "Max BOS age (bars)",              minval=1, group=g_struct)
-i_ob_age    = input.int(60,   "Max OB lookback (bars)",          minval=1, group=g_struct)
-i_entry_atr = input.float(0.0, "Entry proximity (× ATR)",        minval=0.0, step=0.1, group=g_struct)
-i_atr_per   = input.int(14,   "ATR period",                      minval=1, group=g_struct)
-i_sl_buf    = input.float(0.0, "SL buffer (× ATR beyond OB)",    minval=0.0, step=0.05, group=g_struct)
-i_min_sl    = input.float(0.0, "Min SL distance ($)",             minval=0.0, step=0.5, group=g_struct,
-     tooltip="Enforce a minimum SL distance from entry in price units (e.g. 5.0 = $5 for XAUUSD). 0 = disabled. Only pushes SL further from entry — never closer. Use when OB-derived SL would be too tight in quiet markets.")
+i_swing_len = input.int(1,    "Swing pivot strength (bars L/R)", minval=1, group=g_struct,
+     tooltip="Bars needed on each side of a pivot to confirm it. Suggested by TF: 1m=3, 5m=2, 15m=2, 30m=2, 1H=2. Higher = fewer / cleaner swings. Lower = more sensitive (noisy on fast TFs).")
+i_bos_age   = input.int(30,   "Max BOS age (bars)",              minval=1, group=g_struct,
+     tooltip="How long a BOS stays \"active\" for setup hunting. Suggested by TF: 1m=150, 5m=30, 15m=20, 30m=15, 1H=10.")
+i_ob_age    = input.int(60,   "Max OB lookback (bars)",          minval=1, group=g_struct,
+     tooltip="How far back to scan for the OB candle. Suggested by TF: 1m=300, 5m=60, 15m=40, 30m=30, 1H=25.")
+i_entry_atr = input.float(0.0, "Entry proximity (× ATR)",        minval=0.0, step=0.1, group=g_struct,
+     tooltip="How close price must retrace to the OB edge to fire. 0 = price must touch OB exactly. Suggested by TF: 1m=0.3, 5m=0.5, 15m=0.7, 30m=0.7, 1H=0.7.")
+i_atr_per   = input.int(14,   "ATR period",                      minval=1, group=g_struct,
+     tooltip="Volatility smoothing for SL buffer and entry proximity. Suggested by TF: 1m=50, 5m=14, 15m=14, 30m=14, 1H=14.")
+i_sl_buf    = input.float(0.0, "SL buffer (× ATR beyond OB)",    minval=0.0, step=0.05, group=g_struct,
+     tooltip="Pads SL past the OB extreme to avoid wick stops. Suggested by TF: 1m=0.1, 5m=0.1, 15m=0.15, 30m=0.15, 1H=0.2.")
+i_min_sl    = input.float(0.0, "Min SL distance ($) — clamp",     minval=0.0, step=0.5, group=g_struct,
+     tooltip="CLAMP: if OB-derived SL would be tighter than this, push it out to meet the floor (trade still fires with the wider stop). 0 = disabled. Suggested for XAUUSD by TF: 1m=$5, 5m=$7, 15m=$10, 30m=$15, 1H=$25.")
+i_min_sl_flt = input.float(0.0, "Min SL filter ($) — reject",     minval=0.0, step=0.5, group=g_struct,
+     tooltip="FILTER: reject the trade entirely if the OB-derived SL distance is below this threshold (BEFORE the clamp is applied). 0 = disabled. Use this to skip setups whose natural OB is so small the trade would be all-spread. Different from the clamp above: filter SKIPS, clamp WIDENS. Suggested for XAUUSD by TF: 1m=$3, 5m=$5, 15m=$7, 30m=$10, 1H=$15.")
 
 g_htf       = "HTF Bias"
 i_req_h1    = input.bool(true,  "Require 1H bias agreement",     group=g_htf)
@@ -56,10 +72,13 @@ i_adx_per   = input.int(14, "ADX period",                          minval=1, gro
 i_adx_tf    = input.timeframe("15", "ADX timeframe",              group=g_chop)
 i_bos_conf  = input.int(40, "Whipsaw lookback bars (0 = off)",     minval=0, group=g_chop)
 i_atr_exp   = input.float(0.80, "ATR expansion ratio (0 = off)",  minval=0.0, step=0.05, group=g_chop)
-i_atr_ma    = input.int(50, "ATR MA period",                       minval=2, group=g_chop)
+i_atr_ma    = input.int(50, "ATR MA period",                       minval=2, group=g_chop,
+     tooltip="Lookback for the volatility baseline. Suggested: 50 across all TFs (≈4hr on 5m, ≈80min on 1m).")
 
 g_sim       = "Simulated Trades"
 i_sim_on    = input.bool(true,  "Track simulated trades",         group=g_sim)
+i_max_pos   = input.int(1, "Max simultaneous trades",             minval=1, maxval=10, group=g_sim,
+     tooltip="How many sim trades can be open concurrently. 1 = single-position (default, identical to old behavior). >1 lets fresh setups fire even while older trades are still running. Visualization follows the most recently opened active trade only. Suggested by TF: 1m=2-3, 5m=2, 15m=1-2, 30m=1, 1H=1.")
 i_use_tp2   = input.bool(false, "Enable TP2 (2R)",                group=g_sim,
      tooltip="Partial profit at +2R. Uncheck to skip TP2 — TP3 becomes the only target above TP1.")
 i_use_tp3   = input.bool(false, "Enable TP3 (3R)",                group=g_sim,
@@ -70,7 +89,8 @@ i_move_tp1  = input.bool(false, "Move SL → TP1 after TP2",        group=g_sim,
      tooltip="When TP2 fills, trail SL up to TP1 price (locks +1R). Requires TP2 enabled. Has no effect if TP2 is the final target.")
 i_move_tp2  = input.bool(false, "Move SL → TP2 after TP3",        group=g_sim,
      tooltip="When TP3 fills, trail SL up to TP2 price (locks +2R) instead of closing — lets the trade ride past TP3 until SL is hit. Requires TP3 enabled.")
-i_cooldown  = input.int(6,  "Cooldown bars after sim close",      minval=0, group=g_sim)
+i_cooldown  = input.int(6,  "Cooldown bars after sim close",      minval=0, group=g_sim,
+     tooltip="Bars to wait after the LAST sim trade fully closes before opening a new one. Only applies when no trades are active. Suggested by TF: 1m=30, 5m=6, 15m=4, 30m=3, 1H=2.")
 
 g_sess         = "Session Filter"
 i_use_sessions = input.bool(false, "Limit simulation to selected sessions", group=g_sess,
@@ -106,10 +126,35 @@ i_col_be    = input.color(color.new(#26c6da, 0),  "SL → BE color",    group=g_
 i_col_text  = input.color(color.white, "Label text",                 group=g_colors)
 
 // =====================================================================
-// SIGNAL-STATE UDT — bundles all values returned from compute_sig_state()
-// across the request.security boundary. UDT-through-security is the v6
-// idiom for "lift this whole pipeline onto another TF without a 30-element
-// tuple". Field defaults must be non-na for bool (Rule 1 of v6).
+// TRADE UDT — per-position state. Held in array<Trade> inside the sig-TF
+// function so multiple trades can run concurrently. Reference-typed:
+// modifying a Trade fetched via array.get mutates the stored instance.
+// =====================================================================
+type Trade
+    bool   is_long      = false
+    float  entry        = na
+    float  sl           = na
+    float  tp1          = na
+    float  tp2          = na
+    float  tp3          = na
+    float  eff_sl       = na
+    float  eff_sl_r     = na
+    bool   tp1_done     = false
+    bool   tp2_done     = false
+    bool   tp3_done     = false
+    int    open_bar     = 0
+    int    open_day     = 0
+    int    open_month   = 0
+
+// =====================================================================
+// SIGNAL-STATE UDT — bundles everything compute_sig_state() returns
+// across the request.security boundary. Includes:
+//   • Setup flags (bull_setup / bear_setup / forming)
+//   • Displayed trade fields (most recently opened active trade)
+//   • Aggregate sim stats
+//   • Per-bar EVENT flags (open/TP/close) — used by chart-side drawings
+//     instead of bar-transition detection, which doesn't work when N>1
+//     trades can be active simultaneously.
 // =====================================================================
 type SigState
     // Setup detection
@@ -117,7 +162,7 @@ type SigState
     bool   bear_setup    = false
     bool   bull_forming  = false
     bool   bear_forming  = false
-    // Sim position state
+    // Displayed (latest opened active) trade
     bool   sim_long      = false
     bool   sim_short     = false
     float  sim_entry     = na
@@ -130,7 +175,7 @@ type SigState
     bool   sim_tp1_done  = false
     bool   sim_tp2_done  = false
     bool   sim_tp3_done  = false
-    bool   sim_closed_by_tp = false
+    int    active_count  = 0
     // Sim aggregates
     int    sim_count     = 0
     int    sim_wins      = 0
@@ -148,10 +193,22 @@ type SigState
     float  atr_ratio     = 1.0
     string chop_reason   = ""
     string session_now   = "off"
-    // Gating flags (so chart side can show DATE-OUT / OFF-SESS / COOLDOWN)
+    // Gating flags
     bool   in_date_range = true
     bool   in_session    = true
     bool   cooldown_ok   = true
+    // Per-bar event flags (reset each sig-TF bar; latched true if event fired)
+    bool   evt_open_long      = false
+    bool   evt_open_short     = false
+    bool   evt_tp1            = false
+    bool   evt_tp2            = false
+    bool   evt_tp3            = false
+    bool   evt_close_long_tp  = false
+    bool   evt_close_long_sl  = false
+    bool   evt_close_short_tp = false
+    bool   evt_close_short_sl = false
+    // Latest event's trail step (for SL label retext): 0=none, 1=BE, 2=TP1, 3=TP2
+    int    evt_trail_step     = 0
 
 // =====================================================================
 // HELPER — ADX wrapper (ta.adx doesn't exist in v6; use ta.dmi tuple)
@@ -161,14 +218,10 @@ calc_adx(int _period) =>
     _adx
 
 // =====================================================================
-// compute_sig_state() — the full signal + sim pipeline.
-// Called via request.security on the configurable signal TF, so the
-// function executes bar-by-bar on the sig TF and its internal `var`
-// state persists across sig-TF bars. The returned SigState UDT carries
-// the snapshot the chart-side code renders from.
-//
-// Nested request.security calls inside this function (1H bias, ADX) are
-// allowed in v6 and resolve correctly from the sig-TF context.
+// compute_sig_state() — full signal + sim pipeline. See header for the
+// signal-TF lift rationale. Multi-position update: trades are stored in
+// a var array<Trade> inside this function; entry pushes a new Trade,
+// TP/SL processing iterates the array (newest-first for safe removal).
 // =====================================================================
 compute_sig_state() =>
     // -- Volatility --
@@ -301,23 +354,8 @@ compute_sig_state() =>
     bull_forming = have_ob_bull and h1_ok_bull and chop_reason_bull == "" and not near_bull
     bear_forming = have_ob_bear and h1_ok_bear and chop_reason_bear == "" and not near_bear
 
-    // -- Sim trade tracking (state) --
-    var bool  sim_long      = false
-    var bool  sim_short     = false
-    var float sim_entry     = na
-    var float sim_sl        = na
-    var float sim_tp1       = na
-    var float sim_tp2       = na
-    var float sim_tp3       = na
-    var float sim_eff_sl    = na
-    var float sim_eff_sl_r  = na
-    var bool  sim_tp1_done  = false
-    var bool  sim_tp2_done  = false
-    var bool  sim_tp3_done  = false
-    var bool  sim_closed_by_tp = false
-    var int   sim_open_bar    = na
-    var int   sim_open_day    = na
-    var int   sim_open_month  = na
+    // -- Sim state: array of active trades + aggregate counters --
+    var array<Trade> active_trades = array.new<Trade>(0)
     var int   sim_close_bar   = na
 
     var int   sim_wins      = 0
@@ -341,8 +379,10 @@ compute_sig_state() =>
         day_wins_today   := 0
         day_losses_today := 0
 
-    cooldown_ok = na(sim_close_bar) or (bar_index - sim_close_bar) >= i_cooldown
-    sim_idle    = not sim_long and not sim_short
+    // Cooldown: only blocks when zero trades are open (multi-position mode
+    // shouldn't wait between trades, only after the bench fully empties).
+    cooldown_ok = array.size(active_trades) > 0 or
+      na(sim_close_bar) or (bar_index - sim_close_bar) >= i_cooldown
 
     // -- Date range filter (PHT live-rolling current week / month) --
     curmonth_y     = year(timenow,  "Asia/Manila")
@@ -388,52 +428,82 @@ compute_sig_state() =>
       in_london  ? "London" :
       in_asia    ? "Asia"   : "off"
 
-    // -- Entry decision --
-    if i_sim_on and sim_idle and cooldown_ok and in_date_range and in_session and barstate.isconfirmed
-        if bull_setup
-            sim_entry := close
-            sim_sl    := ob_low - i_sl_buf * atr_val
-            if i_min_sl > 0 and (sim_entry - sim_sl) < i_min_sl
-                sim_sl := sim_entry - i_min_sl
-            risk = sim_entry - sim_sl
-            if risk > 0
-                sim_tp1      := sim_entry + 1.0 * risk
-                sim_tp2      := sim_entry + 2.0 * risk
-                sim_tp3      := sim_entry + 3.0 * risk
-                sim_eff_sl   := sim_sl
-                sim_eff_sl_r := -1.0
-                sim_long     := true
-                sim_tp1_done := false
-                sim_tp2_done := false
-                sim_tp3_done := false
-                sim_closed_by_tp := false
-                sim_open_bar   := bar_index
-                sim_open_day   := day_today
-                sim_open_month := month_today
-                sim_count      += 1
-        else if bear_setup
-            sim_entry := close
-            sim_sl    := ob_high + i_sl_buf * atr_val
-            if i_min_sl > 0 and (sim_sl - sim_entry) < i_min_sl
-                sim_sl := sim_entry + i_min_sl
-            risk = sim_sl - sim_entry
-            if risk > 0
-                sim_tp1      := sim_entry - 1.0 * risk
-                sim_tp2      := sim_entry - 2.0 * risk
-                sim_tp3      := sim_entry - 3.0 * risk
-                sim_eff_sl   := sim_sl
-                sim_eff_sl_r := -1.0
-                sim_short    := true
-                sim_tp1_done := false
-                sim_tp2_done := false
-                sim_tp3_done := false
-                sim_closed_by_tp := false
-                sim_open_bar   := bar_index
-                sim_open_day   := day_today
-                sim_open_month := month_today
-                sim_count      += 1
+    // -- Per-bar event flags (local; not var — reset each bar) --
+    evt_open_long      = false
+    evt_open_short     = false
+    evt_tp1            = false
+    evt_tp2            = false
+    evt_tp3            = false
+    evt_close_long_tp  = false
+    evt_close_long_sl  = false
+    evt_close_short_tp = false
+    evt_close_short_sl = false
+    evt_trail_step     = 0
 
-    // -- TP / SL chain config --
+    // -- Entry decision --
+    // Admits a new trade if: sim is on, capacity available, cooldown clear,
+    // bar is inside date/session windows, bar is confirmed. The Min SL
+    // filter rejects setups whose OB-derived SL is too tight BEFORE the
+    // clamp widens it (so the filter sees the natural OB size).
+    if i_sim_on and array.size(active_trades) < i_max_pos and cooldown_ok and in_date_range and in_session and barstate.isconfirmed
+        if bull_setup
+            raw_sl  = ob_low - i_sl_buf * atr_val
+            raw_dst = close - raw_sl
+            // Min SL filter (reject path)
+            if i_min_sl_flt <= 0 or raw_dst >= i_min_sl_flt
+                final_sl = raw_sl
+                // Min SL clamp (widen path)
+                if i_min_sl > 0 and raw_dst < i_min_sl
+                    final_sl := close - i_min_sl
+                risk = close - final_sl
+                if risk > 0
+                    Trade t = Trade.new()
+                    t.is_long    := true
+                    t.entry      := close
+                    t.sl         := final_sl
+                    t.tp1        := close + 1.0 * risk
+                    t.tp2        := close + 2.0 * risk
+                    t.tp3        := close + 3.0 * risk
+                    t.eff_sl     := final_sl
+                    t.eff_sl_r   := -1.0
+                    t.tp1_done   := false
+                    t.tp2_done   := false
+                    t.tp3_done   := false
+                    t.open_bar   := bar_index
+                    t.open_day   := day_today
+                    t.open_month := month_today
+                    array.push(active_trades, t)
+                    sim_count       += 1
+                    evt_open_long   := true
+        else if bear_setup
+            raw_sl  = ob_high + i_sl_buf * atr_val
+            raw_dst = raw_sl - close
+            if i_min_sl_flt <= 0 or raw_dst >= i_min_sl_flt
+                final_sl = raw_sl
+                if i_min_sl > 0 and raw_dst < i_min_sl
+                    final_sl := close + i_min_sl
+                risk = final_sl - close
+                if risk > 0
+                    Trade t = Trade.new()
+                    t.is_long    := false
+                    t.entry      := close
+                    t.sl         := final_sl
+                    t.tp1        := close - 1.0 * risk
+                    t.tp2        := close - 2.0 * risk
+                    t.tp3        := close - 3.0 * risk
+                    t.eff_sl     := final_sl
+                    t.eff_sl_r   := -1.0
+                    t.tp1_done   := false
+                    t.tp2_done   := false
+                    t.tp3_done   := false
+                    t.open_bar   := bar_index
+                    t.open_day   := day_today
+                    t.open_month := month_today
+                    array.push(active_trades, t)
+                    sim_count        += 1
+                    evt_open_short   := true
+
+    // -- TP / SL chain config (shared across all active trades) --
     n_tps_active = 1 + (i_use_tp2 ? 1 : 0) + (i_use_tp3 ? 1 : 0)
     tp_frac      = 1.0 / n_tps_active
 
@@ -445,131 +515,115 @@ compute_sig_state() =>
     win_r_tp2 = (1.0 + 2.0) / 2.0
     win_r_tp3 = (1.0 + (i_use_tp2 ? 2.0 : 0.0) + 3.0) / n_tps_active
 
-    // -- LONGS: TP fills + SL close --
-    if sim_long and bar_index > sim_open_bar
-        opened_today = sim_open_day == day_today and sim_open_month == month_today
-        // TP1
-        if not sim_tp1_done and high >= sim_tp1
-            sim_tp1_done := true
-            if tp1_is_final
-                sim_total_r      += win_r_tp1
-                sim_wins         += 1
+    // -- Process active trades: TP fills + SL exits. Newest-first so we
+    //    can remove closed trades safely while iterating. --
+    if array.size(active_trades) > 0
+        for idx = array.size(active_trades) - 1 to 0
+            Trade t = array.get(active_trades, idx)
+            if bar_index <= t.open_bar
+                continue
+            opened_today = t.open_day == day_today and t.open_month == month_today
+            closed_now   = false
+            // TP1
+            if not t.tp1_done and (t.is_long ? high >= t.tp1 : low <= t.tp1)
+                t.tp1_done := true
+                evt_tp1    := true
+                if tp1_is_final
+                    sim_total_r += win_r_tp1
+                    sim_wins    += 1
+                    if opened_today
+                        day_r_today    += win_r_tp1
+                        day_wins_today += 1
+                    if t.is_long
+                        evt_close_long_tp  := true
+                    else
+                        evt_close_short_tp := true
+                    sim_close_bar := bar_index
+                    closed_now    := true
+                else if i_move_be
+                    t.eff_sl   := t.entry
+                    t.eff_sl_r := 0.0
+                    evt_trail_step := 1
+            // TP2
+            if not closed_now and i_use_tp2 and not t.tp2_done and (t.is_long ? high >= t.tp2 : low <= t.tp2)
+                t.tp2_done := true
+                evt_tp2    := true
+                if tp2_is_final
+                    sim_total_r += win_r_tp2
+                    sim_wins    += 1
+                    if opened_today
+                        day_r_today    += win_r_tp2
+                        day_wins_today += 1
+                    if t.is_long
+                        evt_close_long_tp  := true
+                    else
+                        evt_close_short_tp := true
+                    sim_close_bar := bar_index
+                    closed_now    := true
+                else if i_move_tp1
+                    t.eff_sl   := t.tp1
+                    t.eff_sl_r := 1.0
+                    evt_trail_step := 2
+            // TP3
+            if not closed_now and i_use_tp3 and not t.tp3_done and (t.is_long ? high >= t.tp3 : low <= t.tp3)
+                t.tp3_done := true
+                evt_tp3    := true
+                if tp3_is_final
+                    sim_total_r += win_r_tp3
+                    sim_wins    += 1
+                    if opened_today
+                        day_r_today    += win_r_tp3
+                        day_wins_today += 1
+                    if t.is_long
+                        evt_close_long_tp  := true
+                    else
+                        evt_close_short_tp := true
+                    sim_close_bar := bar_index
+                    closed_now    := true
+                else if i_move_tp2
+                    t.eff_sl   := t.tp2
+                    t.eff_sl_r := 2.0
+                    evt_trail_step := 3
+            // SL (banked + remaining at current eff_sl_r). TP3 in ride-past
+            // mode (i_move_tp2) doesn't scale out at TP3 hit — that fraction
+            // still rides at eff_sl, so it's excluded from "banked".
+            if not closed_now and (t.is_long ? low <= t.eff_sl : high >= t.eff_sl)
+                tp3_banked = t.tp3_done and not i_move_tp2
+                banked = (t.tp1_done ? 1.0 : 0.0) * tp_frac +
+                  (t.tp2_done ? 2.0 : 0.0) * tp_frac +
+                  (tp3_banked  ? 3.0 : 0.0) * tp_frac
+                hits   = (t.tp1_done ? 1 : 0) + (t.tp2_done ? 1 : 0) + (tp3_banked ? 1 : 0)
+                rem    = (n_tps_active - hits) * tp_frac
+                r_realized = banked + rem * t.eff_sl_r
+                sim_total_r += r_realized
+                sim_losses  += 1
                 if opened_today
-                    day_r_today    += win_r_tp1
-                    day_wins_today += 1
-                sim_closed_by_tp := true
-                sim_close_bar    := bar_index
-                sim_long         := false
-            else if i_move_be
-                sim_eff_sl   := sim_entry
-                sim_eff_sl_r := 0.0
-        // TP2
-        if sim_long and i_use_tp2 and not sim_tp2_done and high >= sim_tp2
-            sim_tp2_done := true
-            if tp2_is_final
-                sim_total_r      += win_r_tp2
-                sim_wins         += 1
-                if opened_today
-                    day_r_today    += win_r_tp2
-                    day_wins_today += 1
-                sim_closed_by_tp := true
-                sim_close_bar    := bar_index
-                sim_long         := false
-            else if i_move_tp1
-                sim_eff_sl   := sim_tp1
-                sim_eff_sl_r := 1.0
-        // TP3
-        if sim_long and i_use_tp3 and not sim_tp3_done and high >= sim_tp3
-            sim_tp3_done := true
-            if tp3_is_final
-                sim_total_r      += win_r_tp3
-                sim_wins         += 1
-                if opened_today
-                    day_r_today    += win_r_tp3
-                    day_wins_today += 1
-                sim_closed_by_tp := true
-                sim_close_bar    := bar_index
-                sim_long         := false
-            else if i_move_tp2
-                sim_eff_sl   := sim_tp2
-                sim_eff_sl_r := 2.0
-        // SL hit
-        if sim_long and low <= sim_eff_sl
-            tp3_banked = sim_tp3_done and not i_move_tp2
-            banked = (sim_tp1_done ? 1.0 : 0.0) * tp_frac +
-              (sim_tp2_done ? 2.0 : 0.0) * tp_frac +
-              (tp3_banked   ? 3.0 : 0.0) * tp_frac
-            hits   = (sim_tp1_done ? 1 : 0) + (sim_tp2_done ? 1 : 0) + (tp3_banked ? 1 : 0)
-            rem    = (n_tps_active - hits) * tp_frac
-            r_realized = banked + rem * sim_eff_sl_r
-            sim_total_r += r_realized
-            sim_losses += 1
-            if opened_today
-                day_r_today      += r_realized
-                day_losses_today += 1
-            sim_close_bar := bar_index
-            sim_long      := false
+                    day_r_today      += r_realized
+                    day_losses_today += 1
+                if t.is_long
+                    evt_close_long_sl  := true
+                else
+                    evt_close_short_sl := true
+                sim_close_bar := bar_index
+                closed_now    := true
+            if closed_now
+                array.remove(active_trades, idx)
 
-    // -- SHORTS: mirror --
-    if sim_short and bar_index > sim_open_bar
-        opened_today = sim_open_day == day_today and sim_open_month == month_today
-        if not sim_tp1_done and low <= sim_tp1
-            sim_tp1_done := true
-            if tp1_is_final
-                sim_total_r      += win_r_tp1
-                sim_wins         += 1
-                if opened_today
-                    day_r_today    += win_r_tp1
-                    day_wins_today += 1
-                sim_closed_by_tp := true
-                sim_close_bar    := bar_index
-                sim_short        := false
-            else if i_move_be
-                sim_eff_sl   := sim_entry
-                sim_eff_sl_r := 0.0
-        if sim_short and i_use_tp2 and not sim_tp2_done and low <= sim_tp2
-            sim_tp2_done := true
-            if tp2_is_final
-                sim_total_r      += win_r_tp2
-                sim_wins         += 1
-                if opened_today
-                    day_r_today    += win_r_tp2
-                    day_wins_today += 1
-                sim_closed_by_tp := true
-                sim_close_bar    := bar_index
-                sim_short        := false
-            else if i_move_tp1
-                sim_eff_sl   := sim_tp1
-                sim_eff_sl_r := 1.0
-        if sim_short and i_use_tp3 and not sim_tp3_done and low <= sim_tp3
-            sim_tp3_done := true
-            if tp3_is_final
-                sim_total_r      += win_r_tp3
-                sim_wins         += 1
-                if opened_today
-                    day_r_today    += win_r_tp3
-                    day_wins_today += 1
-                sim_closed_by_tp := true
-                sim_close_bar    := bar_index
-                sim_short        := false
-            else if i_move_tp2
-                sim_eff_sl   := sim_tp2
-                sim_eff_sl_r := 2.0
-        if sim_short and high >= sim_eff_sl
-            tp3_banked = sim_tp3_done and not i_move_tp2
-            banked = (sim_tp1_done ? 1.0 : 0.0) * tp_frac +
-              (sim_tp2_done ? 2.0 : 0.0) * tp_frac +
-              (tp3_banked   ? 3.0 : 0.0) * tp_frac
-            hits   = (sim_tp1_done ? 1 : 0) + (sim_tp2_done ? 1 : 0) + (tp3_banked ? 1 : 0)
-            rem    = (n_tps_active - hits) * tp_frac
-            r_realized = banked + rem * sim_eff_sl_r
-            sim_total_r += r_realized
-            sim_losses += 1
-            if opened_today
-                day_r_today      += r_realized
-                day_losses_today += 1
-            sim_close_bar := bar_index
-            sim_short     := false
+    // -- Determine "displayed" trade = most recently opened still active --
+    int active_n = array.size(active_trades)
+    Trade disp = active_n > 0 ? array.get(active_trades, active_n - 1) : na
+    bool   d_long      = not na(disp) and disp.is_long
+    bool   d_short     = not na(disp) and not disp.is_long
+    float  d_entry     = not na(disp) ? disp.entry      : na
+    float  d_sl        = not na(disp) ? disp.sl         : na
+    float  d_tp1       = not na(disp) ? disp.tp1        : na
+    float  d_tp2       = not na(disp) ? disp.tp2        : na
+    float  d_tp3       = not na(disp) ? disp.tp3        : na
+    float  d_eff_sl    = not na(disp) ? disp.eff_sl     : na
+    float  d_eff_sl_r  = not na(disp) ? disp.eff_sl_r   : na
+    bool   d_tp1_done  = not na(disp) and disp.tp1_done
+    bool   d_tp2_done  = not na(disp) and disp.tp2_done
+    bool   d_tp3_done  = not na(disp) and disp.tp3_done
 
     // -- Collapse chop reasons for display --
     chop_reason_out = chop_reason_bull != "" ? chop_reason_bull :
@@ -581,19 +635,19 @@ compute_sig_state() =>
     s.bear_setup       := bear_setup
     s.bull_forming     := bull_forming
     s.bear_forming     := bear_forming
-    s.sim_long         := sim_long
-    s.sim_short        := sim_short
-    s.sim_entry        := sim_entry
-    s.sim_sl           := sim_sl
-    s.sim_tp1          := sim_tp1
-    s.sim_tp2          := sim_tp2
-    s.sim_tp3          := sim_tp3
-    s.sim_eff_sl       := sim_eff_sl
-    s.sim_eff_sl_r     := sim_eff_sl_r
-    s.sim_tp1_done     := sim_tp1_done
-    s.sim_tp2_done     := sim_tp2_done
-    s.sim_tp3_done     := sim_tp3_done
-    s.sim_closed_by_tp := sim_closed_by_tp
+    s.sim_long         := d_long
+    s.sim_short        := d_short
+    s.sim_entry        := d_entry
+    s.sim_sl           := d_sl
+    s.sim_tp1          := d_tp1
+    s.sim_tp2          := d_tp2
+    s.sim_tp3          := d_tp3
+    s.sim_eff_sl       := d_eff_sl
+    s.sim_eff_sl_r     := d_eff_sl_r
+    s.sim_tp1_done     := d_tp1_done
+    s.sim_tp2_done     := d_tp2_done
+    s.sim_tp3_done     := d_tp3_done
+    s.active_count     := active_n
     s.sim_count        := sim_count
     s.sim_wins         := sim_wins
     s.sim_losses       := sim_losses
@@ -611,6 +665,16 @@ compute_sig_state() =>
     s.in_date_range    := in_date_range
     s.in_session       := in_session
     s.cooldown_ok      := cooldown_ok
+    s.evt_open_long       := evt_open_long
+    s.evt_open_short      := evt_open_short
+    s.evt_tp1             := evt_tp1
+    s.evt_tp2             := evt_tp2
+    s.evt_tp3             := evt_tp3
+    s.evt_close_long_tp   := evt_close_long_tp
+    s.evt_close_long_sl   := evt_close_long_sl
+    s.evt_close_short_tp  := evt_close_short_tp
+    s.evt_close_short_sl  := evt_close_short_sl
+    s.evt_trail_step      := evt_trail_step
     s
 
 // =====================================================================
@@ -621,13 +685,10 @@ sig_tf = i_sig_tf == "" ? timeframe.period : i_sig_tf
 SigState st_raw = request.security(syminfo.tickerid, sig_tf, compute_sig_state(),
                                     barmerge.gaps_off, barmerge.lookahead_off)
 
-// na-safe fallback: on bars before sig TF has any data, use a default state
-// so chart-side field access never sees a na UDT.
 SigState st = na(st_raw) ? SigState.new() : st_raw
 
 // =====================================================================
-// UNPACK — surface UDT fields as locals so the rest of the script reads
-// the same as the pre-lift version.
+// UNPACK
 // =====================================================================
 bull_setup       = st.bull_setup
 bear_setup       = st.bear_setup
@@ -645,7 +706,7 @@ sim_eff_sl_r     = st.sim_eff_sl_r
 sim_tp1_done     = st.sim_tp1_done
 sim_tp2_done     = st.sim_tp2_done
 sim_tp3_done     = st.sim_tp3_done
-sim_closed_by_tp = st.sim_closed_by_tp
+active_count     = st.active_count
 sim_count        = st.sim_count
 sim_wins         = st.sim_wins
 sim_losses       = st.sim_losses
@@ -665,8 +726,23 @@ in_date_range    = st.in_date_range
 in_session       = st.in_session
 cooldown_ok      = st.cooldown_ok
 
+// Event flags drive all chart-side transitions. With multi-position, bar
+// transitions on sim_long/sim_short would miss back-to-back same-direction
+// opens, so we rely on these flags from the sig-TF function instead.
+just_opened_long   = st.evt_open_long
+just_opened_short  = st.evt_open_short
+just_hit_tp1       = st.evt_tp1
+just_hit_tp2       = st.evt_tp2
+just_hit_tp3       = st.evt_tp3
+closed_by_tp_long  = st.evt_close_long_tp
+closed_by_sl_long  = st.evt_close_long_sl
+closed_by_tp_short = st.evt_close_short_tp
+closed_by_sl_short = st.evt_close_short_sl
+just_closed_long   = closed_by_tp_long  or closed_by_sl_long
+just_closed_short  = closed_by_tp_short or closed_by_sl_short
+
 // =====================================================================
-// CHART-SIDE DERIVATIONS — final-TP display, transition flags
+// CHART-SIDE DERIVATIONS — final-TP display
 // =====================================================================
 n_tps_active = 1 + (i_use_tp2 ? 1 : 0) + (i_use_tp3 ? 1 : 0)
 tp3_is_final = i_use_tp3 and not i_move_tp2
@@ -679,18 +755,6 @@ final_tp_price = tp3_is_final ? sim_tp3 :
 final_tp_lbl   = tp3_is_final ? "TP3" :
   tp2_is_final ? "TP2" :
   tp1_is_final ? "TP1" : "TP3 · ride"
-
-// Transitions computed from the UDT field series. Note: these resolve at
-// CHART-bar granularity. A sim trade that opens AND closes inside a single
-// chart bar will not produce a just_opened / just_closed transition here,
-// though sim_count / sim_total_r still reflect it (accumulated on sig TF).
-just_opened_long  = sim_long  and not sim_long[1]
-just_opened_short = sim_short and not sim_short[1]
-just_closed_long  = not sim_long  and sim_long[1]
-just_closed_short = not sim_short and sim_short[1]
-just_hit_tp1      = sim_tp1_done and not sim_tp1_done[1]
-just_hit_tp2      = sim_tp2_done and not sim_tp2_done[1]
-just_hit_tp3      = sim_tp3_done and not sim_tp3_done[1]
 
 // =====================================================================
 // SIGNAL DRAWINGS — Buy/Sell labels, SL/TP lines, fill markers
@@ -711,6 +775,11 @@ if just_opened_short
               style     = label.style_label_down,
               size      = size.small)
 
+// Per-entry vertical lines + right-edge chips. Singleton vars: each new
+// entry overwrites these refs (old lines/labels remain on the chart, just
+// no longer tracked). Right-edge chips follow the LATEST opened active
+// trade only — older active trades' chips aren't drawn in multi-position
+// mode (their entry labels still show).
 var line  ln_v_tp = na
 var line  ln_v_sl = na
 var label lbl_sl  = na
@@ -757,28 +826,24 @@ if (just_closed_long or just_closed_short) and not na(lbl_sl)
     if not na(lbl_tp3)
         label.set_x(lbl_tp3, bar_index)
 
-if just_hit_tp1 and i_move_be and not na(lbl_sl)
+// SL chip retext on trail step (BE / TP1 / TP2)
+if st.evt_trail_step == 1 and not na(lbl_sl)
     label.set_y(lbl_sl, sim_eff_sl)
     label.set_color(lbl_sl, color.new(i_col_be, 50))
     label.set_text(lbl_sl, "SL · BE " + str.tostring(sim_eff_sl, format.mintick))
-if just_hit_tp2 and i_move_tp1 and not na(lbl_sl)
+if st.evt_trail_step == 2 and not na(lbl_sl)
     label.set_y(lbl_sl, sim_eff_sl)
     label.set_color(lbl_sl, color.new(i_col_buy, 50))
     label.set_text(lbl_sl, "SL · TP1 " + str.tostring(sim_eff_sl, format.mintick))
-if just_hit_tp3 and i_move_tp2 and not na(lbl_sl)
+if st.evt_trail_step == 3 and not na(lbl_sl)
     label.set_y(lbl_sl, sim_eff_sl)
     label.set_color(lbl_sl, color.new(i_col_buy, 50))
     label.set_text(lbl_sl, "SL · TP2 " + str.tostring(sim_eff_sl, format.mintick))
 
-plotshape(just_hit_tp1 and sim_long,  "TP1 Long",  shape.xcross, location.abovebar,
+plotshape(just_hit_tp1 and (sim_long or just_closed_long),  "TP1 Long",  shape.xcross, location.abovebar,
           color = i_col_buy,  text = "TP1", textcolor = i_col_text, size = size.tiny)
-plotshape(just_hit_tp1 and sim_short, "TP1 Short", shape.xcross, location.belowbar,
+plotshape(just_hit_tp1 and (sim_short or just_closed_short), "TP1 Short", shape.xcross, location.belowbar,
           color = i_col_buy,  text = "TP1", textcolor = i_col_text, size = size.tiny)
-
-closed_by_tp_long  = just_closed_long  and sim_closed_by_tp
-closed_by_sl_long  = just_closed_long  and not sim_closed_by_tp
-closed_by_tp_short = just_closed_short and sim_closed_by_tp
-closed_by_sl_short = just_closed_short and not sim_closed_by_tp
 
 plotshape(closed_by_tp_long,  "TP Long final",  shape.xcross, location.abovebar,
           color = i_col_buy,  text = "TP", textcolor = i_col_text, size = size.tiny)
@@ -812,7 +877,7 @@ pos_lookup(string s) =>
         "bottom_left"  => position.bottom_left
         => position.bottom_right
 
-var table tbl = table.new(pos_lookup(i_tbl_pos), 2, 18,
+var table tbl = table.new(pos_lookup(i_tbl_pos), 2, 19,
                           bgcolor      = color.new(color.black, 20),
                           border_color = color.new(color.gray, 50),
                           border_width = 1,
@@ -826,14 +891,13 @@ sig_diff       = i_sig_tf != "" and i_sig_tf != timeframe.period
 title_col1_txt = sig_diff ? "sig " + i_sig_tf : "v6"
 
 if i_show_tbl and barstate.islast
-    table.clear(tbl, 0, 0, 1, 17)
+    table.clear(tbl, 0, 0, 1, 18)
 
     f_cell(0, 0, "BG SIGNALS",     color.new(#ffd54f, 0))
     f_cell(0, 1, title_col1_txt,   color.new(#ffd54f, 0))
 
     state_str = switch
-        sim_long                  => "IN-LONG (sim)"
-        sim_short                 => "IN-SHORT (sim)"
+        active_count > 0          => "IN-TRADE × " + str.tostring(active_count)
         not in_date_range         => "DATE-OUT"
         not in_session            => "OFF-SESS"
         not cooldown_ok           => "COOLDOWN"
@@ -843,7 +907,7 @@ if i_show_tbl and barstate.islast
         bear_forming              => "WATCH · SELL"
         =>                           "READY"
     state_clr = switch
-        sim_long or sim_short        => color.new(#ffd54f, 0)
+        active_count > 0             => color.new(#ffd54f, 0)
         not in_date_range            => color.gray
         not in_session               => color.gray
         bull_setup or bear_setup     => color.lime
@@ -873,49 +937,53 @@ if i_show_tbl and barstate.islast
     f_cell(6, 0, "Chop",      color.white)
     f_cell(6, 1, chop_now,    chop_now == "OK" ? color.lime : color.orange)
 
-    f_cell(7, 0, "Sim trades", color.white)
-    f_cell(7, 1, str.tostring(sim_count) + "  W:" + str.tostring(sim_wins) +
+    f_cell(7, 0, "Slots",     color.white)
+    f_cell(7, 1, str.tostring(active_count) + " / " + str.tostring(i_max_pos),
+                  active_count >= i_max_pos ? color.orange : color.silver)
+
+    f_cell(8, 0, "Sim trades", color.white)
+    f_cell(8, 1, str.tostring(sim_count) + "  W:" + str.tostring(sim_wins) +
                   " L:" + str.tostring(sim_losses), color.white)
 
     wr = sim_wins + sim_losses > 0 ? sim_wins * 100.0 / (sim_wins + sim_losses) : 0.0
-    f_cell(8, 0, "Sim WR",    color.white)
-    f_cell(8, 1, str.tostring(wr, "0.0") + "%",
+    f_cell(9, 0, "Sim WR",    color.white)
+    f_cell(9, 1, str.tostring(wr, "0.0") + "%",
                   wr >= 40 ? color.lime : color.red)
 
-    f_cell(9, 0, "Sim total R", color.white)
-    f_cell(9, 1, str.tostring(sim_total_r, "+0.00") + "R",
+    f_cell(10, 0, "Sim total R", color.white)
+    f_cell(10, 1, str.tostring(sim_total_r, "+0.00") + "R",
                    sim_total_r >= 0 ? color.lime : color.red)
 
-    f_cell(10, 0, "Day R (PHT)", color.white)
-    f_cell(10, 1, str.tostring(day_r_now, "+0.00") + "R",
+    f_cell(11, 0, "Day R (PHT)", color.white)
+    f_cell(11, 1, str.tostring(day_r_now, "+0.00") + "R",
                    day_r_now >= 0 ? color.lime : color.red)
 
-    f_cell(11, 0, "Day trades", color.white)
-    f_cell(11, 1, str.tostring(day_count_now) + "  W:" + str.tostring(day_wins_now) +
+    f_cell(12, 0, "Day trades", color.white)
+    f_cell(12, 1, str.tostring(day_count_now) + "  W:" + str.tostring(day_wins_now) +
                    " L:" + str.tostring(day_losses_now),
                    day_count_now > 0 ? color.white : color.gray)
 
     day_wr = day_count_now > 0 ? day_wins_now * 100.0 / day_count_now : 0.0
-    f_cell(12, 0, "Day WR",    color.white)
-    f_cell(12, 1, day_count_now > 0 ? str.tostring(day_wr, "0.0") + "%" : "—",
+    f_cell(13, 0, "Day WR",    color.white)
+    f_cell(13, 1, day_count_now > 0 ? str.tostring(day_wr, "0.0") + "%" : "—",
                    day_count_now == 0 ? color.gray :
                    day_wr >= 40       ? color.lime : color.red)
 
-    if sim_long or sim_short
+    if active_count > 0
         sl_tag = sim_eff_sl_r >= 2.0 ? " (TP2)" :
           sim_eff_sl_r >= 1.0 ? " (TP1)" :
           sim_eff_sl_r >= 0.0 ? " (BE)"  : ""
-        f_cell(13, 0, "Dir",     color.white)
-        f_cell(13, 1, sim_long ? "BUY" : "SELL", sim_long ? color.lime : color.red)
-        f_cell(14, 0, "Entry",   color.white)
-        f_cell(14, 1, str.tostring(sim_entry, format.mintick), color.white)
-        f_cell(15, 0, "SL" + sl_tag, color.white)
-        f_cell(15, 1, str.tostring(sim_eff_sl, format.mintick),
+        f_cell(14, 0, "Dir (latest)", color.white)
+        f_cell(14, 1, sim_long ? "BUY" : "SELL", sim_long ? color.lime : color.red)
+        f_cell(15, 0, "Entry",   color.white)
+        f_cell(15, 1, str.tostring(sim_entry, format.mintick), color.white)
+        f_cell(16, 0, "SL" + sl_tag, color.white)
+        f_cell(16, 1, str.tostring(sim_eff_sl, format.mintick),
                        sim_eff_sl_r >= 0 ? i_col_be : color.red)
-        f_cell(16, 0, "TP1" + (sim_tp1_done ? " ✓" : ""), color.white)
-        f_cell(16, 1, str.tostring(sim_tp1, format.mintick), sim_tp1_done ? color.gray : color.lime)
-        f_cell(17, 0, final_tp_lbl + " (final)", color.white)
-        f_cell(17, 1, str.tostring(final_tp_price, format.mintick), color.lime)
+        f_cell(17, 0, "TP1" + (sim_tp1_done ? " ✓" : ""), color.white)
+        f_cell(17, 1, str.tostring(sim_tp1, format.mintick), sim_tp1_done ? color.gray : color.lime)
+        f_cell(18, 0, final_tp_lbl + " (final)", color.white)
+        f_cell(18, 1, str.tostring(final_tp_price, format.mintick), color.lime)
 
 // =====================================================================
 // ALERTS
@@ -936,8 +1004,8 @@ alertcondition(just_closed_long or just_closed_short, "Trade closed", "BG Signal
 // =====================================================================
 // DATA WINDOW PLOTS
 // =====================================================================
-plot(sim_long ? 1 : sim_short ? -1 : 0, "Position (sim)", color=color.new(color.white, 100), display=display.data_window)
-plot(sim_total_r, "Sim total R",        color=color.new(color.white, 100), display=display.data_window)
-plot(day_r_now,   "Day R",              color=color.new(color.white, 100), display=display.data_window)
-plot(adx_val,     "ADX",                color=color.new(color.white, 100), display=display.data_window)
-plot(atr_ratio,   "ATR ratio",          color=color.new(color.white, 100), display=display.data_window)
+plot(active_count,  "Active count",  color=color.new(color.white, 100), display=display.data_window)
+plot(sim_total_r,   "Sim total R",   color=color.new(color.white, 100), display=display.data_window)
+plot(day_r_now,     "Day R",         color=color.new(color.white, 100), display=display.data_window)
+plot(adx_val,       "ADX",           color=color.new(color.white, 100), display=display.data_window)
+plot(atr_ratio,     "ATR ratio",     color=color.new(color.white, 100), display=display.data_window)
