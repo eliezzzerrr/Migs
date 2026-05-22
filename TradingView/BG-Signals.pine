@@ -892,8 +892,15 @@ var label lbl_tp2 = na
 var label lbl_tp3 = na
 
 if just_opened_long or just_opened_short
-    // Delete previous trade's right-edge chips + horizontal lines so the
-    // chart only shows the latest trade's live levels.
+    // Delete previous trade's right-edge chips so the chart only shows
+    // the latest trade's live price labels (avoids the orphaned-chip
+    // clutter that accumulates across many trades).
+    //
+    // Horizontal SL/TP lines are NOT deleted — closed trades' lines
+    // stay drawn as historical references, frozen wherever their x2
+    // was last extended. The var refs get overwritten by the new
+    // line.new calls below, so old lines become orphaned (visible but
+    // no longer tracked / extended).
     if not na(lbl_sl)
         label.delete(lbl_sl)
     if not na(lbl_tp1)
@@ -902,14 +909,6 @@ if just_opened_long or just_opened_short
         label.delete(lbl_tp2)
     if not na(lbl_tp3)
         label.delete(lbl_tp3)
-    if not na(ln_h_sl)
-        line.delete(ln_h_sl)
-    if not na(ln_h_tp1)
-        line.delete(ln_h_tp1)
-    if not na(ln_h_tp2)
-        line.delete(ln_h_tp2)
-    if not na(ln_h_tp3)
-        line.delete(ln_h_tp3)
 
     // Vertical dashed entry lines (entry → TP, entry → SL). Per-entry
     // historical markers — not deleted on subsequent entries.
