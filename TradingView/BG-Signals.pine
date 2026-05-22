@@ -79,6 +79,8 @@ g_sim       = "Simulated Trades"
 i_sim_on    = input.bool(true,  "Track simulated trades",         group=g_sim)
 i_max_pos   = input.int(1, "Max simultaneous trades",             minval=1, maxval=10, group=g_sim,
      tooltip="How many sim trades can be open concurrently. 1 = single-position (default, identical to old behavior). >1 lets fresh setups fire even while older trades are still running. Visualization follows the most recently opened active trade only. Suggested by TF: 1m=2-3, 5m=2, 15m=1-2, 30m=1, 1H=1.")
+i_scale_out = input.bool(true, "Scale-out at each TP",            group=g_sim,
+     tooltip="ON (doctrine default): each enabled TP closes 1/N of the position (N = count of enabled TPs). Win R is blended — e.g., closing at TP3 with all three TPs enabled = (1+2+3)/3 = 2R. OFF: full position rides to the highest enabled TP. TP1/TP2 hits become trail triggers only (no partial profit taken); the final TP closes 100% at its full R value (TP3 = +3R, TP2 = +2R). With OFF, Sim Total R is independent of which intermediate TPs are enabled — only the highest TP and the trail config matter.")
 i_use_tp2   = input.bool(false, "Enable TP2 (2R)",                group=g_sim,
      tooltip="Partial profit at +2R. Uncheck to skip TP2 — TP3 becomes the only target above TP1.")
 i_use_tp3   = input.bool(false, "Enable TP3 (3R)",                group=g_sim,
@@ -606,9 +608,12 @@ compute_sig_state() =>
     tp2_is_final = not i_use_tp3 and i_use_tp2
     tp1_is_final = not i_use_tp3 and not i_use_tp2
 
+    // Win R per final TP. With scale-out: blended average across enabled
+    // TPs (doctrine "thirds" when all 3 are on). Without scale-out: the
+    // full position closes at the final TP, so win R = that TP's raw R.
     win_r_tp1 = 1.0
-    win_r_tp2 = (1.0 + 2.0) / 2.0
-    win_r_tp3 = (1.0 + (i_use_tp2 ? 2.0 : 0.0) + 3.0) / n_tps_active
+    win_r_tp2 = i_scale_out ? (1.0 + 2.0) / 2.0 : 2.0
+    win_r_tp3 = i_scale_out ? (1.0 + (i_use_tp2 ? 2.0 : 0.0) + 3.0) / n_tps_active : 3.0
 
     // -- Process active trades: TP fills + SL exits. Newest-first so we
     //    can remove closed trades safely while iterating. --
@@ -679,17 +684,26 @@ compute_sig_state() =>
                     t.eff_sl   := t.tp2
                     t.eff_sl_r := 2.0
                     evt_trail_step := 3
-            // SL (banked + remaining at current eff_sl_r). TP3 in ride-past
-            // mode (i_move_tp2) doesn't scale out at TP3 hit — that fraction
-            // still rides at eff_sl, so it's excluded from "banked".
+            // SL. With scale-out: banked partials from each filled TP +
+            // remaining fraction at current eff_sl_r. TP3 in ride-past
+            // mode (i_move_tp2) doesn't scale out at TP3 hit — that
+            // fraction rides at eff_sl, so it's excluded from "banked".
+            //
+            // Without scale-out: full position rides at eff_sl_r — no
+            // partial bank, no fraction math. r_realized is simply the
+            // current trail level (-1 / 0 / +1 / +2).
             if not closed_now and (t.is_long ? low <= t.eff_sl : high >= t.eff_sl)
-                tp3_banked = t.tp3_done and not i_move_tp2
-                banked = (t.tp1_done ? 1.0 : 0.0) * tp_frac +
-                  (t.tp2_done ? 2.0 : 0.0) * tp_frac +
-                  (tp3_banked  ? 3.0 : 0.0) * tp_frac
-                hits   = (t.tp1_done ? 1 : 0) + (t.tp2_done ? 1 : 0) + (tp3_banked ? 1 : 0)
-                rem    = (n_tps_active - hits) * tp_frac
-                r_realized = banked + rem * t.eff_sl_r
+                float r_realized = na
+                if i_scale_out
+                    tp3_banked = t.tp3_done and not i_move_tp2
+                    banked = (t.tp1_done ? 1.0 : 0.0) * tp_frac +
+                      (t.tp2_done ? 2.0 : 0.0) * tp_frac +
+                      (tp3_banked  ? 3.0 : 0.0) * tp_frac
+                    hits   = (t.tp1_done ? 1 : 0) + (t.tp2_done ? 1 : 0) + (tp3_banked ? 1 : 0)
+                    rem    = (n_tps_active - hits) * tp_frac
+                    r_realized := banked + rem * t.eff_sl_r
+                else
+                    r_realized := t.eff_sl_r
                 sim_total_r += r_realized
                 sim_losses  += 1
                 if opened_today
