@@ -97,11 +97,11 @@ i_cooldown  = input.int(6,  "Cooldown bars after sim close",      minval=0, grou
 g_sess         = "Session Filter"
 i_use_sessions = input.bool(false, "Limit simulation to selected sessions", group=g_sess,
      tooltip="When ON, the sim only OPENS new trades during ticked sessions. Existing trades resolve naturally. Times are in UTC; PHT equivalents shown in label. Tick the LDN/NY overlap alone to trade only the highest-volatility window.")
-i_sess_asia    = input.bool(false, "Asia (00:00–09:00 UTC · 08:00–17:00 PHT)",          group=g_sess)
-i_sess_london  = input.bool(true,  "London (08:00–17:00 UTC · 16:00–01:00 PHT)",        group=g_sess)
-i_sess_ny      = input.bool(true,  "New York (13:00–22:00 UTC · 21:00–06:00 PHT)",      group=g_sess)
-i_sess_overlap = input.bool(true,  "LDN/NY overlap (13:00–17:00 UTC · 21:00–01:00 PHT)", group=g_sess,
-     tooltip="The high-volatility window where London and New York both run. Already implicit when both London and NY are ticked; tick this ALONE to trade only the overlap.")
+i_sess_asia    = input.bool(false, "Asia (09:00–18:00 Tokyo · DST-aware)",       group=g_sess)
+i_sess_london  = input.bool(true,  "London (08:00–17:00 London · DST-aware)",    group=g_sess)
+i_sess_ny      = input.bool(true,  "New York (08:00–17:00 NY · DST-aware)",      group=g_sess)
+i_sess_overlap = input.bool(true,  "LDN/NY overlap (London + NY both open)",     group=g_sess,
+     tooltip="The high-volatility window where London and New York both run. Computed as London∩NY, so it auto-adjusts to DST (≈4 hours, shifts between summer/winter). Already implicit when both London and NY are ticked; tick this ALONE to trade only the overlap.")
 
 g_dates        = "Backtest Date Range"
 i_use_curweek  = input.bool(false, "Use current week (Mon 00:00 → next Mon 00:00 PHT)", group=g_dates,
@@ -514,11 +514,13 @@ compute_sig_state() =>
       inside_custom
     in_date_range = not filter_active or inside_range
 
-    // -- Session filter (UTC windows; checks current sig-TF bar's time) --
-    in_asia    = not na(time(timeframe.period, "0000-0900", "UTC"))
-    in_london  = not na(time(timeframe.period, "0800-1700", "UTC"))
-    in_ny      = not na(time(timeframe.period, "1300-2200", "UTC"))
-    in_overlap = not na(time(timeframe.period, "1300-1700", "UTC"))
+    // -- Session filter (exchange-local windows; DST auto-handled by Pine's
+    //    timezone-aware time() — UTC offsets shift with summer/winter time
+    //    so a static UTC string would only match one half of the year). --
+    in_asia    = not na(time(timeframe.period, "0900-1800", "Asia/Tokyo"))
+    in_london  = not na(time(timeframe.period, "0800-1700", "Europe/London"))
+    in_ny      = not na(time(timeframe.period, "0800-1700", "America/New_York"))
+    in_overlap = in_london and in_ny
 
     in_session = not i_use_sessions or
       (i_sess_asia    and in_asia)    or
@@ -874,8 +876,20 @@ final_tp_lbl   = tp3_is_final ? "TP3" :
 // =====================================================================
 // SIGNAL DRAWINGS — Buy/Sell labels, SL/TP lines, fill markers
 // =====================================================================
+// Multiline entry label: embeds the full price set (entry, SL, TP1-3) so
+// each trade carries its own permanent annotation on the chart. With
+// multi-position visualization deleting right-edge chips on each new
+// entry, this is what lets you scroll back to any historical trade and
+// read off its levels without guessing which line is which.
+entry_lbl_text(string _action, float _entry) =>
+    _action + " @ " + str.tostring(_entry, format.mintick) + "\n" +
+      "SL " + str.tostring(sim_sl, format.mintick) + "\n" +
+      "TP1 " + str.tostring(sim_tp1, format.mintick) +
+      (i_use_tp2 ? "\nTP2 " + str.tostring(sim_tp2, format.mintick) : "") +
+      (i_use_tp3 ? "\nTP3 " + str.tostring(sim_tp3, format.mintick) : "")
+
 if just_opened_long
-    label.new(bar_index, low, "Buy @ " + str.tostring(sim_entry, format.mintick),
+    label.new(bar_index, low, entry_lbl_text("Buy", sim_entry),
               yloc      = yloc.belowbar,
               textcolor = i_col_text,
               color     = i_col_buy,
@@ -883,7 +897,7 @@ if just_opened_long
               size      = size.small)
 
 if just_opened_short
-    label.new(bar_index, high, "Sell @ " + str.tostring(sim_entry, format.mintick),
+    label.new(bar_index, high, entry_lbl_text("Sell", sim_entry),
               yloc      = yloc.abovebar,
               textcolor = i_col_text,
               color     = i_col_sell,
