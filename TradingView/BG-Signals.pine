@@ -876,20 +876,8 @@ final_tp_lbl   = tp3_is_final ? "TP3" :
 // =====================================================================
 // SIGNAL DRAWINGS — Buy/Sell labels, SL/TP lines, fill markers
 // =====================================================================
-// Multiline entry label: embeds the full price set (entry, SL, TP1-3) so
-// each trade carries its own permanent annotation on the chart. With
-// multi-position visualization deleting right-edge chips on each new
-// entry, this is what lets you scroll back to any historical trade and
-// read off its levels without guessing which line is which.
-entry_lbl_text(string _action, float _entry) =>
-    _action + " @ " + str.tostring(_entry, format.mintick) + "\n" +
-      "SL " + str.tostring(sim_sl, format.mintick) + "\n" +
-      "TP1 " + str.tostring(sim_tp1, format.mintick) +
-      (i_use_tp2 ? "\nTP2 " + str.tostring(sim_tp2, format.mintick) : "") +
-      (i_use_tp3 ? "\nTP3 " + str.tostring(sim_tp3, format.mintick) : "")
-
 if just_opened_long
-    label.new(bar_index, low, entry_lbl_text("Buy", sim_entry),
+    label.new(bar_index, low, "Buy @ " + str.tostring(sim_entry, format.mintick),
               yloc      = yloc.belowbar,
               textcolor = i_col_text,
               color     = i_col_buy,
@@ -897,7 +885,7 @@ if just_opened_long
               size      = size.small)
 
 if just_opened_short
-    label.new(bar_index, high, entry_lbl_text("Sell", sim_entry),
+    label.new(bar_index, high, "Sell @ " + str.tostring(sim_entry, format.mintick),
               yloc      = yloc.abovebar,
               textcolor = i_col_text,
               color     = i_col_sell,
@@ -926,23 +914,17 @@ var label lbl_tp2 = na
 var label lbl_tp3 = na
 
 if just_opened_long or just_opened_short
-    // Delete previous trade's right-edge chips so the chart only shows
-    // the latest trade's live price labels (avoids the orphaned-chip
-    // clutter that accumulates across many trades).
+    // Neither chips nor horizontal lines are deleted on entry. The var
+    // refs (lbl_sl, ln_h_sl, etc.) get overwritten by the new label/line
+    // objects below, so the prior trade's drawings become orphaned — but
+    // they remain on the chart at their last position, carrying their
+    // own SL/TP prices and horizontal line segments as historical
+    // reference. This is the multi-position visualization the user
+    // wants: every trade keeps its own chips + line set.
     //
-    // Horizontal SL/TP lines are NOT deleted — closed trades' lines
-    // stay drawn as historical references, frozen wherever their x2
-    // was last extended. The var refs get overwritten by the new
-    // line.new calls below, so old lines become orphaned (visible but
-    // no longer tracked / extended).
-    if not na(lbl_sl)
-        label.delete(lbl_sl)
-    if not na(lbl_tp1)
-        label.delete(lbl_tp1)
-    if not na(lbl_tp2)
-        label.delete(lbl_tp2)
-    if not na(lbl_tp3)
-        label.delete(lbl_tp3)
+    // Trade-off: older trades' chips freeze at the bar just before the
+    // next entry (not their actual close bar) because we lose the var
+    // ref. Acceptable — the price labels stay readable on the chart.
 
     // Vertical dashed entry lines (entry → TP, entry → SL). Per-entry
     // historical markers — not deleted on subsequent entries.
