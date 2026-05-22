@@ -14,6 +14,27 @@ The deterministic news gate has been removed from the pipeline per user. Do not 
 
 Re-enable by reverting this section and restoring `workflows/news-check.md`.
 
+## Step 1.5 — Persist chart screenshots
+
+For every chart image attached to the user's turn (typically one 5m and one 1H — sometimes one combined screenshot), copy the temp file into `screenshots/` so the journal entry has a permanent reference.
+
+**Procedure:**
+
+1. Identify the temp path Claude Code surfaces for each pasted image (the Read tool result for the image will show the source path, or it's visible in the image attachment metadata).
+2. Determine the timeframe label for each image (`5m`, `1h`, `combined`) by reading axis labels / timeframe selectors visible in the screenshot during Pass 1.
+3. Compute a slug: `YYYY-MM-DD-HHMM-{tf}.{ext}` where:
+   - `YYYY-MM-DD-HHMM` = current PHT time
+   - `{tf}` = `5m` | `1h` | `combined`
+   - `{ext}` = original extension (`png`, `jpg`, `jpeg`, `webp`)
+4. Copy the file: `Bash cp "<temp_path>" "screenshots/<slug>"` (use `Copy-Item` on PowerShell — `Bash` tool works in WSL bash). On Windows PowerShell, use forward-slashed paths in the destination.
+5. Record the saved path(s) in the journal frontmatter:
+   - `screenshot_path: screenshots/2026-05-22-1430-5m.png` (single image), OR
+   - `screenshot_5m: screenshots/...` + `screenshot_1h: screenshots/...` (separate images)
+
+**If no temp path is recoverable** (older Claude Code versions, dropped attachment, etc.): set `screenshot_path: null` and add a note `screenshot_missing: true` so weekly review can flag it.
+
+**Scout mode:** skip this step entirely — no journal entry means no need to persist the image.
+
 ## Step 2 — Two-pass chart extraction (anti-hallucination)
 
 ### Pass 1 — Primitives only (JSON, no judgment)
@@ -106,6 +127,8 @@ Required fields in output:
 Write `journal/YYYY/MM/NNNN-YYYY-MM-DD-[buy|sell|no-trade].md` using the schema in §10 of the doctrine. NNNN is zero-padded sequential ID across all trades.
 
 Find next ID: `Glob journal/**/*.md` then take max id + 1.
+
+**Screenshot paths** from Step 1.5 go into `screenshot_path` (single) or `screenshot_5m` / `screenshot_1h` (separate). Never leave these null when an image was provided — that's the whole point of Step 1.5.
 
 ## Step 9 — Don't update stats yet
 

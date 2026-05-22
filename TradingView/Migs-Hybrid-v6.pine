@@ -1,23 +1,12 @@
 // =====================================================================
 //  Migs Hybrid — TradingView Pine Script v6 (INDICATOR)
-//  Universal: any symbol, any timeframe. Designed for M5 / H1 bias.
+//  Signal-only display. Buy/Sell labels + SL/TP lines + fill markers.
 //
-//  Visual + signal indicator. Does NOT execute trades. Use the alerts
-//  to drive webhooks, or take trades manually based on what's drawn.
-//
-//  On-chart display:
-//    - Session boxes (Asia / London / NY-AM) with H/L labels + extending H/L lines
-//    - OB box at the order block the BOS fired from
-//    - BOS triangle markers
-//    - Simulated trade levels: Entry / SL / TP1 / TP2 / TP3 with R-labels
-//    - SL line flips cyan when TP1 fills (BE move)
-//    - Status table with bias / ADX / ATR-ratio / chop / sim stats
-//
-//  Strategy mirrored from the MT5 EA / discretionary doctrine:
+//  Strategy:
 //    1. M5 BOS (close beyond recent fractal swing)
 //    2. OB = last opposite-color candle before BOS impulse
-//    3. HTF bias must align (EMA20/50 on H1 by default)
-//    4. Chop filter (strict H1 / ADX / BOS conflict / ATR squeeze)
+//    3. HTF (1H) bias agreement required
+//    4. Chop filter: strict H1 + ADX + BOS conflict + ATR squeeze
 //    5. Entry near OB (≤ ATR proximity)
 //    6. SL beyond OB ± buffer → defines 1R
 //    7. TP1/TP2/TP3 = entry ± 1R/2R/3R (mechanical)
@@ -25,7 +14,7 @@
 // =====================================================================
 //@version=6
 
-indicator("Migs Hybrid v6 (Indicator)",
+indicator("Migs Hybrid v6",
      overlay              = true,
      max_lines_count      = 500,
      max_labels_count     = 500,
@@ -35,99 +24,53 @@ indicator("Migs Hybrid v6 (Indicator)",
 // INPUTS
 // =====================================================================
 g_struct    = "Structure Detection"
-i_swing_len = input.int(2,   "Swing pivot strength (bars L/R)", minval=1, group=g_struct)
-i_bos_age   = input.int(30,  "Max BOS age (bars)",              minval=1, group=g_struct)
-i_ob_age    = input.int(60,  "Max OB lookback (bars)",          minval=1, group=g_struct)
-i_entry_atr = input.float(0.7, "Entry proximity (× ATR)",       minval=0.0, step=0.1, group=g_struct)
-i_atr_per   = input.int(14,  "ATR period",                       minval=1, group=g_struct)
-i_sl_buf    = input.float(0.10, "SL buffer (× ATR beyond OB)",  minval=0.0, step=0.05, group=g_struct)
+i_swing_len = input.int(2,    "Swing pivot strength (bars L/R)", minval=1, group=g_struct)
+i_bos_age   = input.int(30,   "Max BOS age (bars)",              minval=1, group=g_struct)
+i_ob_age    = input.int(60,   "Max OB lookback (bars)",          minval=1, group=g_struct)
+i_entry_atr = input.float(0.7, "Entry proximity (× ATR)",        minval=0.0, step=0.1, group=g_struct)
+i_atr_per   = input.int(14,   "ATR period",                      minval=1, group=g_struct)
+i_sl_buf    = input.float(0.10, "SL buffer (× ATR beyond OB)",   minval=0.0, step=0.05, group=g_struct)
 
 g_htf       = "HTF Bias"
-i_req_h1    = input.bool(true,  "Require 1H bias agreement",    group=g_htf)
-i_h1_tf     = input.timeframe("60", "HTF timeframe",            group=g_htf)
-i_h1_fast   = input.int(20, "HTF fast EMA",                      minval=1, group=g_htf)
-i_h1_slow   = input.int(50, "HTF slow EMA",                      minval=1, group=g_htf)
+i_req_h1    = input.bool(true,  "Require 1H bias agreement",     group=g_htf)
+i_h1_tf     = input.timeframe("60", "HTF timeframe",             group=g_htf)
+i_h1_fast   = input.int(20, "HTF fast EMA",                       minval=1, group=g_htf)
+i_h1_slow   = input.int(50, "HTF slow EMA",                       minval=1, group=g_htf)
 
 g_chop      = "Chop / Consolidation Filter"
-i_chop_on   = input.bool(true,  "Enable chop filter",            group=g_chop)
+i_chop_on   = input.bool(true,  "Enable chop filter",             group=g_chop)
 i_strict_h1 = input.bool(true,  "Strict H1: reject ranging bias", group=g_chop)
-i_adx_min   = input.float(20.0, "ADX minimum (0 = disable)",     minval=0.0, step=0.5, group=g_chop)
-i_adx_per   = input.int(14,  "ADX period",                       minval=1, group=g_chop)
-i_adx_tf    = input.timeframe("15", "ADX timeframe",             group=g_chop)
-i_bos_conf  = input.int(40,  "Whipsaw lookback bars (0 = off)",  minval=0, group=g_chop)
-i_atr_exp   = input.float(0.80, "ATR expansion ratio (0 = off)", minval=0.0, step=0.05, group=g_chop)
-i_atr_ma    = input.int(50,  "ATR MA period",                    minval=2, group=g_chop)
+i_adx_min   = input.float(20.0, "ADX minimum (0 = disable)",      minval=0.0, step=0.5, group=g_chop)
+i_adx_per   = input.int(14, "ADX period",                          minval=1, group=g_chop)
+i_adx_tf    = input.timeframe("15", "ADX timeframe",              group=g_chop)
+i_bos_conf  = input.int(40, "Whipsaw lookback bars (0 = off)",     minval=0, group=g_chop)
+i_atr_exp   = input.float(0.80, "ATR expansion ratio (0 = off)",  minval=0.0, step=0.05, group=g_chop)
+i_atr_ma    = input.int(50, "ATR MA period",                       minval=2, group=g_chop)
 
-g_sim       = "Simulated Trades (visualization only)"
-i_sim_on    = input.bool(true,  "Track simulated trades",        group=g_sim)
-i_move_be   = input.bool(true,  "Move SL → BE after TP1",        group=g_sim)
-i_cooldown  = input.int(6,   "Cooldown bars after sim close",    minval=0, group=g_sim)
+g_sim       = "Simulated Trades"
+i_sim_on    = input.bool(true,  "Track simulated trades",         group=g_sim)
+i_move_be   = input.bool(true,  "Move SL → BE after TP1",         group=g_sim)
+i_cooldown  = input.int(6,  "Cooldown bars after sim close",      minval=0, group=g_sim)
 
-g_sess      = "Session Boxes"
-i_sess_on   = input.bool(true,  "Show session boxes",            group=g_sess)
-i_sess_tz   = input.string("UTC", "Session timezone",
-                            options=["UTC","America/New_York","Europe/London","Asia/Tokyo","Asia/Manila","Australia/Sydney"], group=g_sess)
-i_asia_ses  = input.session("0000-0700:1234567", "Asia session",   group=g_sess)
-i_lon_ses   = input.session("0700-1000:1234567", "London session", group=g_sess)
-i_ny_ses    = input.session("1230-1530:1234567", "NY-AM session",  group=g_sess)
-i_extend_hl = input.bool(true,  "Extend session H/L lines right (until next same session)", group=g_sess)
-i_show_hl_lbl = input.bool(true, "Show H/L price labels (AS.H, LO.L, etc.)", group=g_sess)
-i_sess_label_size = input.string("huge", "Center label size", options=["normal","large","huge"], group=g_sess)
+g_tp        = "Take-Profit Targets"
+i_use_tp1   = input.bool(true,  "Enable TP1 (1R)",                group=g_tp,
+     tooltip="Partial profit at +1R. When TP1 fills, BE migration moves SL to entry (if enabled above).")
+i_use_tp2   = input.bool(true,  "Enable TP2 (2R)",                group=g_tp,
+     tooltip="Partial profit at +2R.")
+i_use_tp3   = input.bool(true,  "Enable TP3 (3R)",                group=g_tp,
+     tooltip="Partial profit at +3R. Disable to make TP2 the final target (higher WR, lower R per win).")
 
-g_disp      = "On-Chart Display"
-i_show_tbl  = input.bool(true,  "Show status table",             group=g_disp)
+g_disp      = "Display"
+i_show_tbl  = input.bool(true,  "Show status table",              group=g_disp)
 i_tbl_pos   = input.string("top_right", "Table position",
                            options=["top_left","top_right","middle_left","middle_right","bottom_left","bottom_right"], group=g_disp)
-i_draw_lvl  = input.bool(true,  "Draw entry / SL / TP lines",    group=g_disp)
-i_draw_ob   = input.bool(true,  "Draw OB boxes",                 group=g_disp)
-i_draw_bos  = input.bool(true,  "Mark BOS arrows",               group=g_disp)
-i_label_R   = input.bool(true,  "Label R-values on TPs",         group=g_disp)
+i_lbl_off   = input.int(15, "Label offset (bars right)",          minval=1, group=g_disp)
 
 g_colors    = "Colors"
-i_col_buy   = input.color(color.new(#26a69a, 0),  "BUY accent",   group=g_colors)
-i_col_sell  = input.color(color.new(#ef5350, 0),  "SELL accent",  group=g_colors)
-i_col_ob_d  = input.color(color.new(#26a69a, 80), "Demand OB fill", group=g_colors)
-i_col_ob_s  = input.color(color.new(#ef5350, 80), "Supply OB fill", group=g_colors)
-i_col_be    = input.color(color.new(#26c6da, 0),  "SL→BE color",  group=g_colors)
-i_col_asia  = input.color(color.new(#5c9eff, 85), "Asia fill",    group=g_colors)
-i_col_lon   = input.color(color.new(#ff7a7a, 85), "London fill",  group=g_colors)
-i_col_nyam  = input.color(color.new(#5fd6b3, 85), "NY-AM fill",   group=g_colors)
-i_col_asia_t = input.color(color.new(#5c9eff, 60), "Asia label/line",   group=g_colors)
-i_col_lon_t  = input.color(color.new(#ff7a7a, 60), "London label/line", group=g_colors)
-i_col_nyam_t = input.color(color.new(#5fd6b3, 60), "NY-AM label/line",  group=g_colors)
-
-g_lvls      = "Key Levels — Auto"
-i_show_h1_bsl    = input.bool(true,  "1H BSL (swing high)",         group=g_lvls)
-i_show_h1_ssl    = input.bool(true,  "1H SSL / 1H swing low",       group=g_lvls)
-i_show_h14_ssl   = input.bool(true,  "1H/4H SSL (deeper)",          group=g_lvls)
-i_show_m15_bsl   = input.bool(true,  "15m BSL",                     group=g_lvls)
-i_show_m15_ssl   = input.bool(true,  "15m SSL",                     group=g_lvls)
-i_show_h1_ob     = input.bool(true,  "1H bearish OB",               group=g_lvls)
-i_show_h4_ob     = input.bool(true,  "4H bearish OB",               group=g_lvls)
-i_show_m15_ob    = input.bool(true,  "Provisional 15m OB",          group=g_lvls)
-i_show_asia_50   = input.bool(true,  "50% Asian range",             group=g_lvls)
-i_ob_height_atr  = input.float(0.30, "OB box height (× ATR)", minval=0.05, step=0.05, group=g_lvls)
-i_lvl_lookback   = input.int(300,    "Levels — max lookback bars",  minval=10, group=g_lvls)
-i_lvl_label_off  = input.int(8,      "Levels — label offset (bars)", minval=1, group=g_lvls)
-
-g_man       = "Key Levels — Manual (price; 0 = off)"
-i_thesis_kill_hi = input.price(0.0, "1H swing high — thesis kill",  group=g_man, confirm=false)
-i_swing_may19    = input.price(0.0, "1H swing high May 19",         group=g_man, confirm=false)
-i_choch_trigger  = input.price(0.0, "15m CHoCH trigger",            group=g_man, confirm=false)
-i_tp1            = input.price(0.0, "M15 SSL — TP1",                group=g_man, confirm=false)
-i_tp2_runner     = input.price(0.0, "TP2 runner",                   group=g_man, confirm=false)
-
-g_lvl_col   = "Key Level Colors"
-i_col_h1_lvl   = input.color(color.new(#ffa726, 0),  "1H levels",        group=g_lvl_col)
-i_col_h4_lvl   = input.color(color.new(#ef5350, 0),  "4H levels",        group=g_lvl_col)
-i_col_m15_lvl  = input.color(color.new(#ab47bc, 0),  "15m levels",       group=g_lvl_col)
-i_col_asia50   = input.color(color.new(#26c6da, 0),  "Asian 50%",        group=g_lvl_col)
-i_col_thesis   = input.color(color.new(#ff5252, 0),  "Thesis kill",      group=g_lvl_col)
-i_col_choch_l  = input.color(color.new(#ffeb3b, 0),  "CHoCH trigger",    group=g_lvl_col)
-i_col_tp       = input.color(color.new(#66bb6a, 0),  "TP levels",        group=g_lvl_col)
-i_col_h1_ob    = input.color(color.new(#ef5350, 78), "1H OB fill",       group=g_lvl_col)
-i_col_h4_ob    = input.color(color.new(#d32f2f, 78), "4H OB fill",       group=g_lvl_col)
-i_col_m15_ob   = input.color(color.new(#7e57c2, 78), "15m OB fill",      group=g_lvl_col)
+i_col_buy   = input.color(color.new(#26a69a, 0),  "Buy / TP accent",  group=g_colors)
+i_col_sell  = input.color(color.new(#ef5350, 0),  "Sell / SL accent", group=g_colors)
+i_col_be    = input.color(color.new(#26c6da, 0),  "SL → BE color",    group=g_colors)
+i_col_text  = input.color(color.white, "Label text",                 group=g_colors)
 
 // =====================================================================
 // INDICATORS
@@ -148,20 +91,6 @@ h1_bear  = h1_fast < h1_slow and h1_close < h1_fast
 h1_bias_s = h1_bull ? "bullish" : h1_bear ? "bearish" : "ranging"
 
 adx_val  = request.security(syminfo.tickerid, i_adx_tf, calc_adx(i_adx_per), barmerge.gaps_off, barmerge.lookahead_off)
-
-// Multi-TF data for Key Levels — bundled to stay under request.security quota.
-// Use [1] + lookahead_on so the values are confirmed (non-repaint).
-[h1l_ph, h1l_pl] = request.security(syminfo.tickerid, "60",
-     [ta.pivothigh(2, 2)[1], ta.pivotlow(2, 2)[1]],
-     barmerge.gaps_off, barmerge.lookahead_on)
-
-[h4l_ph, h4l_pl] = request.security(syminfo.tickerid, "240",
-     [ta.pivothigh(2, 2)[1], ta.pivotlow(2, 2)[1]],
-     barmerge.gaps_off, barmerge.lookahead_on)
-
-[m15l_ph, m15l_pl] = request.security(syminfo.tickerid, "15",
-     [ta.pivothigh(2, 2)[1], ta.pivotlow(2, 2)[1]],
-     barmerge.gaps_off, barmerge.lookahead_on)
 
 // =====================================================================
 // STRUCTURE — SWINGS / BOS / OB
@@ -281,7 +210,7 @@ bull_setup = have_ob_bull and near_bull and h1_ok_bull and chop_reason_bull == "
 bear_setup = have_ob_bear and near_bear and h1_ok_bear and chop_reason_bear == ""
 
 // =====================================================================
-// SIMULATED TRADE TRACKING (visualization only — no orders)
+// SIMULATED TRADE TRACKING
 // =====================================================================
 var bool  sim_long      = false
 var bool  sim_short     = false
@@ -339,6 +268,7 @@ if i_sim_on and sim_idle and cooldown_ok and barstate.isconfirmed
             sim_open_bar := bar_index
             sim_count    += 1
 
+// TP1 fill detection (also moves effective SL to BE)
 if sim_long and not sim_tp1_done and high >= sim_tp1
     sim_tp1_done := true
     if i_move_be
@@ -348,10 +278,7 @@ if sim_short and not sim_tp1_done and low <= sim_tp1
     if i_move_be
         sim_eff_sl := sim_entry
 
-// Finalization is inlined per Pine v6 rule: user-defined functions cannot
-// modify global-scope variables (CE10088). Each branch updates totals
-// directly in global scope.
-
+// Close detection — inlined per Pine v6 CE10088 (no global mutation in funcs)
 if sim_long
     if high >= sim_tp3
         sim_total_r   += 2.0
@@ -385,493 +312,122 @@ if sim_short
         sim_short     := false
 
 // =====================================================================
-// DRAWINGS — OB BOX
-// =====================================================================
-var box ob_box = na
-
-if i_draw_ob and (bull_bos or bear_bos) and not na(ob_bar)
-    if not na(ob_box)
-        box.delete(ob_box)
-    fill_clr = ob_demand ? i_col_ob_d : i_col_ob_s
-    bord_clr = ob_demand ? i_col_buy  : i_col_sell
-    ob_box := box.new(ob_bar, ob_high, bar_index + 30, ob_low,
-                      border_color = bord_clr,
-                      border_width = 1,
-                      bgcolor      = fill_clr)
-
-if i_draw_ob and not na(ob_box) and (sim_long or sim_short or active_bull_bos or active_bear_bos)
-    box.set_right(ob_box, bar_index + 30)
-
-if not sim_long and not sim_short and not active_bull_bos and not active_bear_bos and not na(ob_box)
-    box.delete(ob_box)
-    ob_box := na
-
-// =====================================================================
-// DRAWINGS — BOS ARROWS
-// =====================================================================
-plotshape(i_draw_bos and bull_bos, title="Bull BOS",
-          location=location.belowbar, style=shape.triangleup, color=i_col_buy,  size=size.small)
-plotshape(i_draw_bos and bear_bos, title="Bear BOS",
-          location=location.abovebar, style=shape.triangledown, color=i_col_sell, size=size.small)
-
-// =====================================================================
-// DRAWINGS — ENTRY / SL / TP LINES (sim position)
-// =====================================================================
-var line  ln_entry = na
-var line  ln_sl    = na
-var line  ln_tp1   = na
-var line  ln_tp2   = na
-var line  ln_tp3   = na
-var label lb_tp1   = na
-var label lb_tp2   = na
-var label lb_tp3   = na
-
-clear_levels() =>
-    if not na(ln_entry)
-        line.delete(ln_entry)
-    if not na(ln_sl)
-        line.delete(ln_sl)
-    if not na(ln_tp1)
-        line.delete(ln_tp1)
-    if not na(ln_tp2)
-        line.delete(ln_tp2)
-    if not na(ln_tp3)
-        line.delete(ln_tp3)
-    if not na(lb_tp1)
-        label.delete(lb_tp1)
-    if not na(lb_tp2)
-        label.delete(lb_tp2)
-    if not na(lb_tp3)
-        label.delete(lb_tp3)
-
-just_opened = (sim_long or sim_short) and (sim_long[1] == false and sim_short[1] == false)
-
-if i_draw_lvl and just_opened
-    clear_levels()
-    ln_entry := line.new(bar_index, sim_entry, bar_index + 40, sim_entry,
-                         color=color.new(color.gray, 30), style=line.style_dashed, width=1)
-    ln_sl    := line.new(bar_index, sim_sl, bar_index + 40, sim_sl,
-                         color=i_col_sell, style=line.style_solid, width=2)
-    ln_tp1   := line.new(bar_index, sim_tp1, bar_index + 40, sim_tp1,
-                         color=i_col_buy, style=line.style_solid, width=1)
-    ln_tp2   := line.new(bar_index, sim_tp2, bar_index + 40, sim_tp2,
-                         color=i_col_buy, style=line.style_solid, width=1)
-    ln_tp3   := line.new(bar_index, sim_tp3, bar_index + 40, sim_tp3,
-                         color=i_col_buy, style=line.style_solid, width=1)
-    if i_label_R
-        lb_tp1 := label.new(bar_index + 40, sim_tp1, "TP1 +1R",
-                            style=label.style_label_left, color=color.new(color.black, 70),
-                            textcolor=color.white, size=size.small)
-        lb_tp2 := label.new(bar_index + 40, sim_tp2, "TP2 +2R",
-                            style=label.style_label_left, color=color.new(color.black, 70),
-                            textcolor=color.white, size=size.small)
-        lb_tp3 := label.new(bar_index + 40, sim_tp3, "TP3 +3R",
-                            style=label.style_label_left, color=color.new(color.black, 70),
-                            textcolor=color.white, size=size.small)
-
-if i_draw_lvl and (sim_long or sim_short) and not na(ln_entry)
-    right_x = bar_index + 40
-    line.set_x2(ln_entry, right_x)
-    line.set_x2(ln_sl,    right_x)
-    line.set_x2(ln_tp1,   right_x)
-    line.set_x2(ln_tp2,   right_x)
-    line.set_x2(ln_tp3,   right_x)
-    line.set_y1(ln_sl, sim_eff_sl)
-    line.set_y2(ln_sl, sim_eff_sl)
-    line.set_color(ln_sl, sim_tp1_done ? i_col_be : i_col_sell)
-    if sim_tp1_done
-        line.set_color(ln_tp1, color.new(color.gray, 40))
-    if i_label_R and not na(lb_tp1)
-        label.set_x(lb_tp1, right_x)
-        label.set_x(lb_tp2, right_x)
-        label.set_x(lb_tp3, right_x)
-
-if not sim_long and not sim_short and not na(ln_entry)
-    clear_levels()
-    ln_entry := na
-    ln_sl    := na
-    ln_tp1   := na
-    ln_tp2   := na
-    ln_tp3   := na
-    lb_tp1   := na
-    lb_tp2   := na
-    lb_tp3   := na
-
-// =====================================================================
-// SESSION BOXES (Asia / London / NY-AM)
-// =====================================================================
-sess_label_size = i_sess_label_size == "huge" ? size.huge :
-                  i_sess_label_size == "large" ? size.large : size.normal
-
-in_asia   = not na(time(timeframe.period, i_asia_ses, i_sess_tz))
-in_london = not na(time(timeframe.period, i_lon_ses,  i_sess_tz))
-in_nyam   = not na(time(timeframe.period, i_ny_ses,   i_sess_tz))
-
-asia_start_now   = i_sess_on and in_asia   and not in_asia[1]
-asia_end_now     = i_sess_on and not in_asia   and in_asia[1]
-london_start_now = i_sess_on and in_london and not in_london[1]
-london_end_now   = i_sess_on and not in_london and in_london[1]
-nyam_start_now   = i_sess_on and in_nyam   and not in_nyam[1]
-nyam_end_now     = i_sess_on and not in_nyam   and in_nyam[1]
-
-// ---- Asia ----
-var box   as_box   = na
-var label as_lblM  = na
-var label as_lblH  = na
-var label as_lblL  = na
-var line  as_lnH   = na
-var line  as_lnL   = na
-var float as_hi    = na
-var float as_lo    = na
-var int   as_start = na
-
-if asia_start_now
-    if not na(as_box)
-        box.delete(as_box)
-    if not na(as_lblM)
-        label.delete(as_lblM)
-    if not na(as_lblH)
-        label.delete(as_lblH)
-    if not na(as_lblL)
-        label.delete(as_lblL)
-    if not na(as_lnH)
-        line.delete(as_lnH)
-    if not na(as_lnL)
-        line.delete(as_lnL)
-    as_hi    := high
-    as_lo    := low
-    as_start := bar_index
-    as_box   := box.new(bar_index, high, bar_index, low,
-                        border_color = i_col_asia_t,
-                        border_width = 1,
-                        bgcolor      = i_col_asia)
-    as_lblM  := label.new(bar_index, (high + low) / 2, "Asia",
-                          textcolor = i_col_asia_t,
-                          color     = color.new(color.black, 100),
-                          style     = label.style_none,
-                          size      = sess_label_size)
-
-if i_sess_on and in_asia and not na(as_box)
-    as_hi := math.max(as_hi, high)
-    as_lo := math.min(as_lo, low)
-    box.set_top(as_box, as_hi)
-    box.set_bottom(as_box, as_lo)
-    box.set_right(as_box, bar_index)
-    label.set_x(as_lblM, math.round((as_start + bar_index) / 2))
-    label.set_y(as_lblM, (as_hi + as_lo) / 2)
-
-if asia_end_now and not na(as_box)
-    if i_show_hl_lbl
-        as_lblH := label.new(as_start, as_hi, "AS.H",
-                             style     = label.style_none,
-                             textcolor = i_col_asia_t,
-                             color     = color.new(color.black, 100),
-                             size      = size.small)
-        as_lblL := label.new(as_start, as_lo, "AS.L",
-                             style     = label.style_none,
-                             textcolor = i_col_asia_t,
-                             color     = color.new(color.black, 100),
-                             size      = size.small)
-    if i_extend_hl
-        as_lnH := line.new(bar_index - 1, as_hi, bar_index, as_hi,
-                           color = i_col_asia_t, width = 1, extend = extend.right)
-        as_lnL := line.new(bar_index - 1, as_lo, bar_index, as_lo,
-                           color = i_col_asia_t, width = 1, extend = extend.right)
-
-// ---- London ----
-var box   lo_box   = na
-var label lo_lblM  = na
-var label lo_lblH  = na
-var label lo_lblL  = na
-var line  lo_lnH   = na
-var line  lo_lnL   = na
-var float lo_hi    = na
-var float lo_lo    = na
-var int   lo_start = na
-
-if london_start_now
-    if not na(lo_box)
-        box.delete(lo_box)
-    if not na(lo_lblM)
-        label.delete(lo_lblM)
-    if not na(lo_lblH)
-        label.delete(lo_lblH)
-    if not na(lo_lblL)
-        label.delete(lo_lblL)
-    if not na(lo_lnH)
-        line.delete(lo_lnH)
-    if not na(lo_lnL)
-        line.delete(lo_lnL)
-    lo_hi    := high
-    lo_lo    := low
-    lo_start := bar_index
-    lo_box   := box.new(bar_index, high, bar_index, low,
-                        border_color = i_col_lon_t,
-                        border_width = 1,
-                        bgcolor      = i_col_lon)
-    lo_lblM  := label.new(bar_index, (high + low) / 2, "London",
-                          textcolor = i_col_lon_t,
-                          color     = color.new(color.black, 100),
-                          style     = label.style_none,
-                          size      = sess_label_size)
-
-if i_sess_on and in_london and not na(lo_box)
-    lo_hi := math.max(lo_hi, high)
-    lo_lo := math.min(lo_lo, low)
-    box.set_top(lo_box, lo_hi)
-    box.set_bottom(lo_box, lo_lo)
-    box.set_right(lo_box, bar_index)
-    label.set_x(lo_lblM, math.round((lo_start + bar_index) / 2))
-    label.set_y(lo_lblM, (lo_hi + lo_lo) / 2)
-
-if london_end_now and not na(lo_box)
-    if i_show_hl_lbl
-        lo_lblH := label.new(lo_start, lo_hi, "LO.H",
-                             style     = label.style_none,
-                             textcolor = i_col_lon_t,
-                             color     = color.new(color.black, 100),
-                             size      = size.small)
-        lo_lblL := label.new(lo_start, lo_lo, "LO.L",
-                             style     = label.style_none,
-                             textcolor = i_col_lon_t,
-                             color     = color.new(color.black, 100),
-                             size      = size.small)
-    if i_extend_hl
-        lo_lnH := line.new(bar_index - 1, lo_hi, bar_index, lo_hi,
-                           color = i_col_lon_t, width = 1, extend = extend.right)
-        lo_lnL := line.new(bar_index - 1, lo_lo, bar_index, lo_lo,
-                           color = i_col_lon_t, width = 1, extend = extend.right)
-
-// ---- NY-AM ----
-var box   ny_box   = na
-var label ny_lblM  = na
-var label ny_lblH  = na
-var label ny_lblL  = na
-var line  ny_lnH   = na
-var line  ny_lnL   = na
-var float ny_hi    = na
-var float ny_lo    = na
-var int   ny_start = na
-
-if nyam_start_now
-    if not na(ny_box)
-        box.delete(ny_box)
-    if not na(ny_lblM)
-        label.delete(ny_lblM)
-    if not na(ny_lblH)
-        label.delete(ny_lblH)
-    if not na(ny_lblL)
-        label.delete(ny_lblL)
-    if not na(ny_lnH)
-        line.delete(ny_lnH)
-    if not na(ny_lnL)
-        line.delete(ny_lnL)
-    ny_hi    := high
-    ny_lo    := low
-    ny_start := bar_index
-    ny_box   := box.new(bar_index, high, bar_index, low,
-                        border_color = i_col_nyam_t,
-                        border_width = 1,
-                        bgcolor      = i_col_nyam)
-    ny_lblM  := label.new(bar_index, (high + low) / 2, "NYAM",
-                          textcolor = i_col_nyam_t,
-                          color     = color.new(color.black, 100),
-                          style     = label.style_none,
-                          size      = sess_label_size)
-
-if i_sess_on and in_nyam and not na(ny_box)
-    ny_hi := math.max(ny_hi, high)
-    ny_lo := math.min(ny_lo, low)
-    box.set_top(ny_box, ny_hi)
-    box.set_bottom(ny_box, ny_lo)
-    box.set_right(ny_box, bar_index)
-    label.set_x(ny_lblM, math.round((ny_start + bar_index) / 2))
-    label.set_y(ny_lblM, (ny_hi + ny_lo) / 2)
-
-if nyam_end_now and not na(ny_box)
-    if i_show_hl_lbl
-        ny_lblH := label.new(ny_start, ny_hi, "NYAM.H",
-                             style     = label.style_none,
-                             textcolor = i_col_nyam_t,
-                             color     = color.new(color.black, 100),
-                             size      = size.small)
-        ny_lblL := label.new(ny_start, ny_lo, "NYAM.L",
-                             style     = label.style_none,
-                             textcolor = i_col_nyam_t,
-                             color     = color.new(color.black, 100),
-                             size      = size.small)
-    if i_extend_hl
-        ny_lnH := line.new(bar_index - 1, ny_hi, bar_index, ny_hi,
-                           color = i_col_nyam_t, width = 1, extend = extend.right)
-        ny_lnL := line.new(bar_index - 1, ny_lo, bar_index, ny_lo,
-                           color = i_col_nyam_t, width = 1, extend = extend.right)
-
-// =====================================================================
-// MULTI-TF KEY LEVELS — pivots + bearish OBs + manual lines
+// SIGNAL DRAWINGS — Buy/Sell labels, SL/TP lines, fill markers
 // =====================================================================
 
-// --- Track latest pivots per TF ---
-var float l_h1_sh    = na
-var int   l_h1_sh_b  = na
-var float l_h1_sl    = na
-var int   l_h1_sl_b  = na
+// --- Transition flags ---
+just_opened_long  = sim_long  and not sim_long[1]
+just_opened_short = sim_short and not sim_short[1]
+just_closed_long  = not sim_long  and sim_long[1]
+just_closed_short = not sim_short and sim_short[1]
+just_hit_tp1      = sim_tp1_done and not sim_tp1_done[1]
 
-if not na(h1l_ph)
-    l_h1_sh   := h1l_ph
-    l_h1_sh_b := bar_index
-if not na(h1l_pl)
-    l_h1_sl   := h1l_pl
-    l_h1_sl_b := bar_index
+// --- Entry labels (permanent — one per historical trade) ---
+if just_opened_long
+    label.new(bar_index, low, "Buy",
+              yloc      = yloc.belowbar,
+              textcolor = i_col_text,
+              color     = i_col_buy,
+              style     = label.style_label_up,
+              size      = size.small)
 
-var float l_h4_sh    = na
-var int   l_h4_sh_b  = na
-var float l_h4_sl    = na
-var int   l_h4_sl_b  = na
+if just_opened_short
+    label.new(bar_index, high, "Sell",
+              yloc      = yloc.abovebar,
+              textcolor = i_col_text,
+              color     = i_col_sell,
+              style     = label.style_label_down,
+              size      = size.small)
 
-if not na(h4l_ph)
-    l_h4_sh   := h4l_ph
-    l_h4_sh_b := bar_index
-if not na(h4l_pl)
-    l_h4_sl   := h4l_pl
-    l_h4_sl_b := bar_index
+// --- Per-trade drawings (vertical entry lines + right-edge labels) ---
+// Horizontal SL/TP lines are rendered via plot() below (more reliable than
+// line.new — doesn't count against max_lines_count, always visible).
+// Only vertical entry lines + right-edge labels use line.new / label.new here.
+var line  ln_v_tp = na
+var line  ln_v_sl = na
+var label lbl_sl  = na
+var label lbl_tp1 = na
+var label lbl_tp2 = na
+var label lbl_tp3 = na
 
-var float l_m15_sh   = na
-var int   l_m15_sh_b = na
-var float l_m15_sl   = na
-var int   l_m15_sl_b = na
+if just_opened_long or just_opened_short
+    // Vertical dashed lines at entry: entry→TP3 (green) and entry→SL (red)
+    ln_v_tp := line.new(bar_index, sim_entry, bar_index, sim_tp3,
+                         color = i_col_buy,  style = line.style_dashed, width = 1)
+    ln_v_sl := line.new(bar_index, sim_entry, bar_index, sim_sl,
+                         color = i_col_sell, style = line.style_dashed, width = 1)
 
-if not na(m15l_ph)
-    l_m15_sh   := m15l_ph
-    l_m15_sh_b := bar_index
-if not na(m15l_pl)
-    l_m15_sl   := m15l_pl
-    l_m15_sl_b := bar_index
+    // Right-edge labels (style_label_left = chip pointing left into the line)
+    lbl_sl  := label.new(bar_index + i_lbl_off, sim_sl,  "SL",
+                          style = label.style_label_left, color = color.new(i_col_sell, 50),
+                          textcolor = i_col_text, size = size.small)
+    lbl_tp1 := label.new(bar_index + i_lbl_off, sim_tp1, "TP1",
+                          style = label.style_label_left, color = color.new(i_col_buy, 50),
+                          textcolor = i_col_text, size = size.small)
+    lbl_tp2 := label.new(bar_index + i_lbl_off, sim_tp2, "TP2",
+                          style = label.style_label_left, color = color.new(i_col_buy, 50),
+                          textcolor = i_col_text, size = size.small)
+    lbl_tp3 := label.new(bar_index + i_lbl_off, sim_tp3, "TP3",
+                          style = label.style_label_left, color = color.new(i_col_buy, 50),
+                          textcolor = i_col_text, size = size.small)
 
-// --- 1H/4H deep SSL = the lower of the two ---
-deep_ssl   = na(l_h1_sl) ? l_h4_sl : (na(l_h4_sl) ? l_h1_sl : math.min(l_h1_sl, l_h4_sl))
-deep_ssl_b = (not na(l_h4_sl) and (na(l_h1_sl) or l_h4_sl <= l_h1_sl)) ? l_h4_sl_b : l_h1_sl_b
+// Active trade: anchor labels at live bar + offset (right-edge projection)
+if (sim_long or sim_short) and not na(lbl_sl)
+    label.set_x(lbl_sl,  bar_index + i_lbl_off)
+    label.set_x(lbl_tp1, bar_index + i_lbl_off)
+    label.set_x(lbl_tp2, bar_index + i_lbl_off)
+    label.set_x(lbl_tp3, bar_index + i_lbl_off)
 
-// --- 50% Asian range (reuses as_hi/as_lo from session boxes section) ---
-asia_50    = (not na(as_hi) and not na(as_lo)) ? (as_hi + as_lo) / 2 : na
-asia_50_b  = na(as_start) ? bar_index - 100 : as_start
+// Close bar: snap labels to the close bar so they end with the plot lines
+if (just_closed_long or just_closed_short) and not na(lbl_sl)
+    label.set_x(lbl_sl,  bar_index)
+    label.set_x(lbl_tp1, bar_index)
+    label.set_x(lbl_tp2, bar_index)
+    label.set_x(lbl_tp3, bar_index)
 
-// --- Bearish OBs (approximation: swing-high price ± ATR-scaled height) ---
-ob_h = i_ob_height_atr * atr_val
+// On TP1 fill: SL label migrates to BE price + flips color/text
+if just_hit_tp1 and i_move_be and not na(lbl_sl)
+    label.set_y(lbl_sl, sim_eff_sl)
+    label.set_color(lbl_sl, color.new(i_col_be, 50))
+    label.set_text(lbl_sl, "SL · BE")
 
-// --- Drawing helpers (chart side effects only — no global var mutation per CE10088) ---
-f_lvl(line prev_ln, label prev_lbl, float price, int start_bar,
-      bool enabled, string txt, color clr) =>
-    if not na(prev_ln)
-        line.delete(prev_ln)
-    if not na(prev_lbl)
-        label.delete(prev_lbl)
-    line  ln  = na
-    label lbl = na
-    if enabled and not na(price)
-        sx = na(start_bar) ? bar_index - math.min(i_lvl_lookback, bar_index - 1) : start_bar
-        ln  := line.new(sx, price, bar_index, price,
-                         color = clr, width = 1, extend = extend.right)
-        lbl := label.new(bar_index + i_lvl_label_off, price, txt,
-                          style     = label.style_label_left,
-                          color     = color.new(clr, 70),
-                          textcolor = color.white,
-                          size      = size.small)
-    [ln, lbl]
+// --- Fill markers (permanent — one per fill event via plotshape) ---
+// TP1 hit: X above bar (long) or below bar (short)
+plotshape(just_hit_tp1 and sim_long,  "TP1 Long",  shape.xcross, location.abovebar,
+          color = i_col_buy,  text = "TP1", textcolor = i_col_text, size = size.tiny)
+plotshape(just_hit_tp1 and sim_short, "TP1 Short", shape.xcross, location.belowbar,
+          color = i_col_buy,  text = "TP1", textcolor = i_col_text, size = size.tiny)
 
-f_ob(box prev_bx, label prev_lbl, float top, float bot, int start_bar,
-     bool enabled, string txt, color bord_clr, color fill_clr) =>
-    if not na(prev_bx)
-        box.delete(prev_bx)
-    if not na(prev_lbl)
-        label.delete(prev_lbl)
-    box   bx  = na
-    label lbl = na
-    if enabled and not na(top) and not na(bot)
-        sx = na(start_bar) ? bar_index - math.min(i_lvl_lookback, bar_index - 1) : start_bar
-        bx  := box.new(sx, top, bar_index + i_lvl_label_off, bot,
-                        border_color = bord_clr,
-                        border_width = 1,
-                        bgcolor      = fill_clr,
-                        extend       = extend.right)
-        lbl := label.new(bar_index + i_lvl_label_off, (top + bot) / 2, txt,
-                          style     = label.style_label_left,
-                          color     = color.new(bord_clr, 70),
-                          textcolor = color.white,
-                          size      = size.small)
-    [bx, lbl]
+// TP3 hit (close via TP path) vs SL hit (close via SL path)
+closed_by_tp_long  = just_closed_long  and high >= sim_tp3
+closed_by_sl_long  = just_closed_long  and not closed_by_tp_long
+closed_by_tp_short = just_closed_short and low  <= sim_tp3
+closed_by_sl_short = just_closed_short and not closed_by_tp_short
 
-// --- Persistent drawing references ---
-var line  ln_h1_bsl     = na
-var label lbl_h1_bsl    = na
-var line  ln_h1_ssl     = na
-var label lbl_h1_ssl    = na
-var line  ln_h14_ssl    = na
-var label lbl_h14_ssl   = na
-var line  ln_m15_bsl    = na
-var label lbl_m15_bsl   = na
-var line  ln_m15_ssl    = na
-var label lbl_m15_ssl   = na
-var line  ln_asia50     = na
-var label lbl_asia50    = na
+plotshape(closed_by_tp_long,  "TP3 Long",  shape.xcross, location.abovebar,
+          color = i_col_buy,  text = "TP3", textcolor = i_col_text, size = size.tiny)
+plotshape(closed_by_tp_short, "TP3 Short", shape.xcross, location.belowbar,
+          color = i_col_buy,  text = "TP3", textcolor = i_col_text, size = size.tiny)
+plotshape(closed_by_sl_long,  "SL Long",   shape.circle, location.belowbar,
+          color = i_col_sell, text = "SL",  textcolor = i_col_text, size = size.tiny)
+plotshape(closed_by_sl_short, "SL Short",  shape.circle, location.abovebar,
+          color = i_col_sell, text = "SL",  textcolor = i_col_text, size = size.tiny)
 
-var box   bx_h1_ob      = na
-var label lbl_h1_ob     = na
-var box   bx_h4_ob      = na
-var label lbl_h4_ob     = na
-var box   bx_m15_ob     = na
-var label lbl_m15_ob    = na
-
-var line  ln_thesis     = na
-var label lbl_thesis    = na
-var line  ln_may19      = na
-var label lbl_may19     = na
-var line  ln_choch      = na
-var label lbl_choch     = na
-var line  ln_tp1        = na
-var label lbl_tp1       = na
-var line  ln_tp2        = na
-var label lbl_tp2       = na
-
-// --- Redraw each confirmed bar (keeps right edge anchored to the chart) ---
-if barstate.isconfirmed or barstate.islast
-    // Auto-detected horizontal levels
-    [ln_h1_bsl,   lbl_h1_bsl]   := f_lvl(ln_h1_bsl,   lbl_h1_bsl,
-         l_h1_sh,  l_h1_sh_b,  i_show_h1_bsl,  "1H BSL",                i_col_h1_lvl)
-    [ln_h1_ssl,   lbl_h1_ssl]   := f_lvl(ln_h1_ssl,   lbl_h1_ssl,
-         l_h1_sl,  l_h1_sl_b,  i_show_h1_ssl,  "1H SSL / swing low",    i_col_h1_lvl)
-    [ln_h14_ssl,  lbl_h14_ssl]  := f_lvl(ln_h14_ssl,  lbl_h14_ssl,
-         deep_ssl, deep_ssl_b, i_show_h14_ssl, "1H/4H SSL",             i_col_h4_lvl)
-    [ln_m15_bsl,  lbl_m15_bsl]  := f_lvl(ln_m15_bsl,  lbl_m15_bsl,
-         l_m15_sh, l_m15_sh_b, i_show_m15_bsl, "15m BSL",               i_col_m15_lvl)
-    [ln_m15_ssl,  lbl_m15_ssl]  := f_lvl(ln_m15_ssl,  lbl_m15_ssl,
-         l_m15_sl, l_m15_sl_b, i_show_m15_ssl, "15m SSL",               i_col_m15_lvl)
-    [ln_asia50,   lbl_asia50]   := f_lvl(ln_asia50,   lbl_asia50,
-         asia_50,  asia_50_b,  i_show_asia_50, "50% Asian range",       i_col_asia50)
-
-    // Bearish OB boxes
-    [bx_h1_ob,    lbl_h1_ob]    := f_ob(bx_h1_ob,  lbl_h1_ob,
-         l_h1_sh,  l_h1_sh - ob_h,  l_h1_sh_b,  i_show_h1_ob,  "1H bearish OB",       i_col_h1_lvl, i_col_h1_ob)
-    [bx_h4_ob,    lbl_h4_ob]    := f_ob(bx_h4_ob,  lbl_h4_ob,
-         l_h4_sh,  l_h4_sh - ob_h*1.5, l_h4_sh_b,  i_show_h4_ob,  "4H bearish OB",   i_col_h4_lvl, i_col_h4_ob)
-    [bx_m15_ob,   lbl_m15_ob]   := f_ob(bx_m15_ob, lbl_m15_ob,
-         l_m15_sh, l_m15_sh - ob_h*0.7, l_m15_sh_b, i_show_m15_ob, "Provisional 15m OB", i_col_m15_lvl, i_col_m15_ob)
-
-    // Manual price levels (price == 0 means "off")
-    [ln_thesis,   lbl_thesis]   := f_lvl(ln_thesis,   lbl_thesis,
-         i_thesis_kill_hi > 0 ? i_thesis_kill_hi : na, na,
-         i_thesis_kill_hi > 0, "1H swing high — thesis kill", i_col_thesis)
-    [ln_may19,    lbl_may19]    := f_lvl(ln_may19,    lbl_may19,
-         i_swing_may19    > 0 ? i_swing_may19    : na, na,
-         i_swing_may19    > 0, "1H swing high May 19",         i_col_h1_lvl)
-    [ln_choch,    lbl_choch]    := f_lvl(ln_choch,    lbl_choch,
-         i_choch_trigger  > 0 ? i_choch_trigger  : na, na,
-         i_choch_trigger  > 0, "15m CHoCH trigger",            i_col_choch_l)
-    [ln_tp1,      lbl_tp1]      := f_lvl(ln_tp1,      lbl_tp1,
-         i_tp1            > 0 ? i_tp1            : na, na,
-         i_tp1            > 0, "M15 SSL — TP1",                i_col_tp)
-    [ln_tp2,      lbl_tp2]      := f_lvl(ln_tp2,      lbl_tp2,
-         i_tp2_runner     > 0 ? i_tp2_runner     : na, na,
-         i_tp2_runner     > 0, "TP2 runner",                   i_col_tp)
+// --- Horizontal SL / TP1 / TP2 / TP3 lines via plot() ---
+// Rendered through Pine's price-series engine → always visible, doesn't count
+// against max_lines_count, and na-gating with style_linebr breaks the line
+// cleanly between trades (no staircase connections).
+// Lines show during active trade + on the close bar, then break with na.
+visible_lvl = sim_long or sim_short or just_closed_long or just_closed_short
+sl_plot   = visible_lvl ? sim_eff_sl : na
+tp1_plot  = visible_lvl ? sim_tp1    : na
+tp2_plot  = visible_lvl ? sim_tp2    : na
+tp3_plot  = visible_lvl ? sim_tp3    : na
+sl_clr    = sim_tp1_done ? i_col_be : i_col_sell
+plot(sl_plot,  title = "SL line",  color = sl_clr,    style = plot.style_linebr, linewidth = 2)
+plot(tp1_plot, title = "TP1 line", color = i_col_buy, style = plot.style_linebr, linewidth = 1)
+plot(tp2_plot, title = "TP2 line", color = i_col_buy, style = plot.style_linebr, linewidth = 1)
+plot(tp3_plot, title = "TP3 line", color = i_col_buy, style = plot.style_linebr, linewidth = 1)
 
 // =====================================================================
 // STATUS TABLE
@@ -885,7 +441,7 @@ pos_lookup(s) =>
         "bottom_left"  => position.bottom_left
         => position.bottom_right
 
-var table tbl = table.new(pos_lookup(i_tbl_pos), 2, 18,
+var table tbl = table.new(pos_lookup(i_tbl_pos), 2, 16,
                           bgcolor      = color.new(color.black, 20),
                           border_color = color.new(color.gray, 50),
                           border_width = 1,
@@ -896,10 +452,10 @@ f_cell(_row, _col, _txt, _clr) =>
     table.cell(tbl, _col, _row, _txt, text_color=_clr, text_size=size.small, text_halign=text.align_left)
 
 if i_show_tbl and barstate.islast
-    table.clear(tbl, 0, 0, 1, 17)
+    table.clear(tbl, 0, 0, 1, 15)
 
-    f_cell(0, 0, "MIGS HYBRID",     color.new(#ffd54f, 0))
-    f_cell(0, 1, "INDICATOR v6",    color.new(#ffd54f, 0))
+    f_cell(0, 0, "MIGS HYBRID", color.new(#ffd54f, 0))
+    f_cell(0, 1, "v6",          color.new(#ffd54f, 0))
 
     state_str = switch
         sim_long                  => "IN-LONG (sim)"
@@ -912,89 +468,71 @@ if i_show_tbl and barstate.islast
         bull_setup or bear_setup  => color.lime
         not cooldown_ok           => color.gray
         =>                           color.silver
-    f_cell(1, 0, "State",       color.white)
-    f_cell(1, 1, state_str,     state_clr)
+    f_cell(1, 0, "State",     color.white)
+    f_cell(1, 1, state_str,   state_clr)
 
-    f_cell(2, 0, "Symbol",      color.white)
+    f_cell(2, 0, "Symbol",    color.white)
     f_cell(2, 1, syminfo.ticker + " " + timeframe.period, color.white)
 
-    cur_sess = in_nyam   ? "NY-AM"  :
-               in_london ? "London" :
-               in_asia   ? "Asia"   : "off-session"
-    sess_clr = in_nyam   ? i_col_nyam_t :
-               in_london ? i_col_lon_t  :
-               in_asia   ? i_col_asia_t : color.silver
-    f_cell(3, 0, "Session",     color.white)
-    f_cell(3, 1, cur_sess,      sess_clr)
-
-    f_cell(4, 0, "1H Bias",     color.white)
-    f_cell(4, 1, h1_bias_s,     h1_bull ? color.lime : h1_bear ? color.red : color.silver)
+    f_cell(3, 0, "1H Bias",   color.white)
+    f_cell(3, 1, h1_bias_s,   h1_bull ? color.lime : h1_bear ? color.red : color.silver)
 
     adx_clr = i_adx_min > 0 and adx_val < i_adx_min ? color.red : color.lime
-    f_cell(5, 0, "ADX(" + i_adx_tf + ")", color.white)
-    f_cell(5, 1, str.tostring(adx_val, "0.0"), adx_clr)
+    f_cell(4, 0, "ADX(" + i_adx_tf + ")", color.white)
+    f_cell(4, 1, str.tostring(adx_val, "0.0"), adx_clr)
 
     atr_clr = i_atr_exp > 0 and atr_ratio < i_atr_exp ? color.red : color.lime
-    f_cell(6, 0, "ATR ratio",   color.white)
-    f_cell(6, 1, str.tostring(atr_ratio, "0.00"), atr_clr)
+    f_cell(5, 0, "ATR ratio", color.white)
+    f_cell(5, 1, str.tostring(atr_ratio, "0.00"), atr_clr)
 
     chop_now = chop_reason_bull != "" ? chop_reason_bull :
-               chop_reason_bear != "" ? chop_reason_bear : "OK"
-    f_cell(7, 0, "Chop",        color.white)
-    f_cell(7, 1, chop_now,      chop_now == "OK" ? color.lime : color.orange)
+      chop_reason_bear != "" ? chop_reason_bear : "OK"
+    f_cell(6, 0, "Chop",      color.white)
+    f_cell(6, 1, chop_now,    chop_now == "OK" ? color.lime : color.orange)
 
-    f_cell(8, 0, "Sim trades",  color.white)
-    f_cell(8, 1, str.tostring(sim_count) + "  W:" + str.tostring(sim_wins) +
-                 " L:" + str.tostring(sim_losses), color.white)
+    f_cell(7, 0, "Sim trades", color.white)
+    f_cell(7, 1, str.tostring(sim_count) + "  W:" + str.tostring(sim_wins) +
+                  " L:" + str.tostring(sim_losses), color.white)
 
     wr = sim_wins + sim_losses > 0 ? sim_wins * 100.0 / (sim_wins + sim_losses) : 0.0
-    f_cell(9, 0, "Sim WR",      color.white)
-    f_cell(9, 1, str.tostring(wr, "0.0") + "%",
-                 wr >= 40 ? color.lime : color.red)
+    f_cell(8, 0, "Sim WR",    color.white)
+    f_cell(8, 1, str.tostring(wr, "0.0") + "%",
+                  wr >= 40 ? color.lime : color.red)
 
-    f_cell(10, 0, "Sim total R", color.white)
-    f_cell(10, 1, str.tostring(sim_total_r, "+0.00") + "R",
-                  sim_total_r >= 0 ? color.lime : color.red)
+    f_cell(9, 0, "Sim total R", color.white)
+    f_cell(9, 1, str.tostring(sim_total_r, "+0.00") + "R",
+                   sim_total_r >= 0 ? color.lime : color.red)
 
-    f_cell(11, 0, "Day R",      color.white)
-    f_cell(11, 1, str.tostring(day_r_now, "+0.00") + "R",
-                  day_r_now >= 0 ? color.lime : color.red)
+    f_cell(10, 0, "Day R",    color.white)
+    f_cell(10, 1, str.tostring(day_r_now, "+0.00") + "R",
+                   day_r_now >= 0 ? color.lime : color.red)
 
     if sim_long or sim_short
-        f_cell(12, 0, "Dir",     color.white)
-        f_cell(12, 1, sim_long ? "BUY" : "SELL", sim_long ? color.lime : color.red)
-        f_cell(13, 0, "Entry",   color.white)
-        f_cell(13, 1, str.tostring(sim_entry, format.mintick), color.white)
-        f_cell(14, 0, "SL" + (sim_tp1_done ? " (BE)" : ""), color.white)
-        f_cell(14, 1, str.tostring(sim_eff_sl, format.mintick), sim_tp1_done ? i_col_be : color.red)
-        f_cell(15, 0, "TP1" + (sim_tp1_done ? " ✓" : ""), color.white)
-        f_cell(15, 1, str.tostring(sim_tp1, format.mintick), sim_tp1_done ? color.gray : color.lime)
-        f_cell(16, 0, "TP2",     color.white)
-        f_cell(16, 1, str.tostring(sim_tp2, format.mintick), color.lime)
-        f_cell(17, 0, "TP3",     color.white)
-        f_cell(17, 1, str.tostring(sim_tp3, format.mintick), color.lime)
-    else
-        f_cell(12, 0, "Last bull BOS", color.white)
-        f_cell(12, 1, na(last_bull_bos_b) ? "—" : str.tostring(bar_index - last_bull_bos_b) + " bars ago",
-                       color.silver)
-        f_cell(13, 0, "Last bear BOS", color.white)
-        f_cell(13, 1, na(last_bear_bos_b) ? "—" : str.tostring(bar_index - last_bear_bos_b) + " bars ago",
-                       color.silver)
+        f_cell(11, 0, "Dir",     color.white)
+        f_cell(11, 1, sim_long ? "BUY" : "SELL", sim_long ? color.lime : color.red)
+        f_cell(12, 0, "Entry",   color.white)
+        f_cell(12, 1, str.tostring(sim_entry, format.mintick), color.white)
+        f_cell(13, 0, "SL" + (sim_tp1_done ? " (BE)" : ""), color.white)
+        f_cell(13, 1, str.tostring(sim_eff_sl, format.mintick), sim_tp1_done ? i_col_be : color.red)
+        f_cell(14, 0, "TP1" + (sim_tp1_done ? " ✓" : ""), color.white)
+        f_cell(14, 1, str.tostring(sim_tp1, format.mintick), sim_tp1_done ? color.gray : color.lime)
+        f_cell(15, 0, "TP3",     color.white)
+        f_cell(15, 1, str.tostring(sim_tp3, format.mintick), color.lime)
 
 // =====================================================================
 // ALERTS
 // =====================================================================
-alertcondition(bull_setup, "Migs BUY setup", "Migs Hybrid: BUY setup detected")
+alertcondition(bull_setup, "Migs BUY setup",  "Migs Hybrid: BUY setup detected")
 alertcondition(bear_setup, "Migs SELL setup", "Migs Hybrid: SELL setup detected")
-alertcondition(bull_bos,   "Bullish BOS",     "Bullish break of structure")
-alertcondition(bear_bos,   "Bearish BOS",     "Bearish break of structure")
-alertcondition(sim_long  and sim_long[1] == false,  "Sim LONG opened",  "Migs Hybrid: simulated LONG entry")
-alertcondition(sim_short and sim_short[1] == false, "Sim SHORT opened", "Migs Hybrid: simulated SHORT entry")
+alertcondition(just_opened_long,  "Sim LONG opened",  "Migs Hybrid: simulated LONG entry")
+alertcondition(just_opened_short, "Sim SHORT opened", "Migs Hybrid: simulated SHORT entry")
+alertcondition(just_hit_tp1,      "TP1 hit",          "Migs Hybrid: TP1 filled")
+alertcondition(just_closed_long or just_closed_short, "Trade closed", "Migs Hybrid: trade closed")
 
 // =====================================================================
 // DATA WINDOW PLOTS
 // =====================================================================
-plot(sim_long ? 1 : sim_short ? -1 : 0, "Position direction (sim)", color=color.new(color.white, 100), display=display.data_window)
+plot(sim_long ? 1 : sim_short ? -1 : 0, "Position (sim)", color=color.new(color.white, 100), display=display.data_window)
 plot(sim_total_r, "Sim total R",        color=color.new(color.white, 100), display=display.data_window)
 plot(day_r_now,   "Day R",              color=color.new(color.white, 100), display=display.data_window)
 plot(adx_val,     "ADX",                color=color.new(color.white, 100), display=display.data_window)

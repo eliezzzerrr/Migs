@@ -46,12 +46,22 @@ Inspect the user's message (and any image) and route to one of:
 
 | Trigger | Workflow |
 |---|---|
-| Chart screenshot + "Migs", "grade this", "signal?" | **Signal generation** (`workflows/signal-generation.md`) |
+| Chart screenshot + word **"scout"** (case-insensitive, anywhere in message) | **Scout mode** — full analysis, NO journal write |
+| Chart screenshot + "Migs", "grade this", "log this", "signal?" (no "scout") | **Signal generation** with journal write (`workflows/signal-generation.md`) |
+| Chart screenshot with no qualifying word (default) | **Signal generation** with journal write |
 | "Trade #NNNN hit TP1/TP2/SL/BE" or "close trade NNNN at X" | **Outcome update** (`workflows/outcome-update.md`) |
 | "Weekly review", "review the week", "review patterns" | **Weekly review** (`workflows/weekly-review.md`) |
 | "What's my WR?", "show stats", "graduation progress" | Read `patterns/stats.json` and report concisely |
 | "Show pattern #NN", "what's pattern X" | Read the pattern file and summarize |
 | Ambiguous | Ask one clarifying question |
+
+### Scout mode (analyze, don't log)
+
+When the user's message contains the word **"scout"** (case-insensitive, e.g. "scout this", "Migs scout", "quick scout"), run the FULL signal-generation pipeline (Pass 1 → Pass 2 → §9 → rubric → pattern → self-critique → emit) but **SKIP step J entirely**. Do not call `WriteJournalEntry`. Do not create or modify any file in `journal/`. Do not increment the journal counter.
+
+Output is identical to a normal signal/NO-TRADE response in style, but include a `[SCOUT — not logged]` tag in the first line so the user knows nothing was persisted.
+
+If the scout reveals a tradeable setup and the user follows up with "log it" or "log this scout", repeat the pipeline (or trust your previous Pass 1 JSON if user attaches it) and write the journal entry.
 
 ## Signal-generation procedure (the main one — full detail)
 
@@ -70,6 +80,8 @@ Skipped per current doctrine (2026-05-21). Set `news_window: disabled` in the jo
 ### C. Pass 1 — Extract primitives (JSON)
 
 Look at the chart screenshot. Emit JSON per the schema in `workflows/signal-generation.md`. **Every field is grounded or null.** Include a `confidence` field (0.0–1.0). If <0.6, stop here and emit NO TRADE.
+
+**Also persist the chart image** to `screenshots/YYYY-MM-DD-HHMM-{tf}.{ext}` per Step 1.5 in `workflows/signal-generation.md`. Use the temp path Claude Code surfaces for the pasted image. Skip if scout mode.
 
 ### D. Pass 2 — Judgment
 
@@ -105,7 +117,9 @@ Use the format in `doctrine/migs-hybrid-strategy.md` §9. Always include:
 
 ### J. Write journal entry
 
-`journal/YYYY/MM/NNNN-YYYY-MM-DD-[buy|sell|no-trade].md` with the full YAML schema from `doctrine/migs-hybrid-strategy.md` §10. Including `chart_features` (the Pass 1 JSON), confidence, invalidation conditions, and screenshot path.
+**SKIP this step entirely if the user's message contained "scout"** (case-insensitive). Scout mode = analysis only, no persistence. Do not create the file. Do not increment the journal counter.
+
+Otherwise, write `journal/YYYY/MM/NNNN-YYYY-MM-DD-[buy|sell|no-trade].md` with the full YAML schema from `doctrine/migs-hybrid-strategy.md` §10. Including `chart_features` (the Pass 1 JSON), confidence, invalidation conditions, and screenshot path.
 
 To find the next NNNN:
 
@@ -113,6 +127,8 @@ To find the next NNNN:
 Glob journal/**/*.md
 # Take filename prefix max(NNNN) + 1, zero-padded to 4 digits
 ```
+
+If you wrote a journal entry, output its file path on the last line so the user can find it. If you skipped it (scout mode), output `[SCOUT — not logged]` instead.
 
 ### K. Do NOT update stats
 

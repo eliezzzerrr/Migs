@@ -6,9 +6,15 @@ This project hosts a Claude Code subagent (`migs-trader`) that grades XAUUSD cha
 
 Drop a 5m + 1H chart screenshot into the conversation (or `screenshots/`) and say:
 
-> "Migs — grade this setup"
+> "Migs — grade this setup"           ← full pipeline, writes a journal entry
+> "Migs scout this"  /  "scout"        ← analysis only, NO journal entry
 
-…or just "use migs-trader". The agent activates when the message contains "Migs" or a chart image is provided.
+The agent activates when the message contains "Migs" or a chart image is provided. Two modes:
+
+- **Default (grade + log)** — runs the full Migs Hybrid pipeline AND writes a journal entry to `journal/YYYY/MM/NNNN-...md`. Use when you actually take the trade or want a permanent record.
+- **Scout (analyze only)** — include the word **"scout"** anywhere in the message. Runs the same pipeline so you see verdict + grade + invalidation conditions, but **skips the journal write entirely**. Use for exploratory chart reads where you don't want to clutter the journal.
+
+If a scout reveals a tradeable setup and you decide to take it, follow up with "log this" or "log the scout" and the agent will write the entry.
 
 ## Directory layout
 
