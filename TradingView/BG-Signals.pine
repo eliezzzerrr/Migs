@@ -870,24 +870,66 @@ if just_opened_short
               style     = label.style_label_down,
               size      = size.small)
 
-// Per-entry vertical lines + right-edge chips. Singleton vars: each new
-// entry overwrites these refs (old lines/labels remain on the chart, just
-// no longer tracked). Right-edge chips follow the LATEST opened active
-// trade only — older active trades' chips aren't drawn in multi-position
-// mode (their entry labels still show).
+// Per-trade drawings. Singleton vars hold the LATEST opened active
+// trade's lines/chips. On each new entry, OLD chips and OLD horizontal
+// lines are deleted before fresh ones are created, so only the latest
+// trade's right-edge chips ever appear. Older trades' entry labels +
+// vertical entry lines stay on the chart as historical markers.
+//
+// Horizontal SL/TP lines use line.new (per trade, drawn from entry bar
+// extending to current bar while active, frozen at close_bar afterward).
+// This replaces the prior plot()-based approach, which stair-stepped
+// between trades when the displayed trade switched mid-flight.
 var line  ln_v_tp = na
 var line  ln_v_sl = na
+var line  ln_h_sl  = na
+var line  ln_h_tp1 = na
+var line  ln_h_tp2 = na
+var line  ln_h_tp3 = na
 var label lbl_sl  = na
 var label lbl_tp1 = na
 var label lbl_tp2 = na
 var label lbl_tp3 = na
 
 if just_opened_long or just_opened_short
+    // Delete previous trade's right-edge chips + horizontal lines so the
+    // chart only shows the latest trade's live levels.
+    if not na(lbl_sl)
+        label.delete(lbl_sl)
+    if not na(lbl_tp1)
+        label.delete(lbl_tp1)
+    if not na(lbl_tp2)
+        label.delete(lbl_tp2)
+    if not na(lbl_tp3)
+        label.delete(lbl_tp3)
+    if not na(ln_h_sl)
+        line.delete(ln_h_sl)
+    if not na(ln_h_tp1)
+        line.delete(ln_h_tp1)
+    if not na(ln_h_tp2)
+        line.delete(ln_h_tp2)
+    if not na(ln_h_tp3)
+        line.delete(ln_h_tp3)
+
+    // Vertical dashed entry lines (entry → TP, entry → SL). Per-entry
+    // historical markers — not deleted on subsequent entries.
     ln_v_tp := line.new(bar_index, sim_entry, bar_index, final_tp_price,
                          color = i_col_buy,  style = line.style_dashed, width = 1)
     ln_v_sl := line.new(bar_index, sim_entry, bar_index, sim_sl,
                          color = i_col_sell, style = line.style_dashed, width = 1)
 
+    // Horizontal SL/TP lines — extend from entry bar; x2 updates each
+    // bar while trade is active (block below), freezes at close.
+    ln_h_sl  := line.new(bar_index, sim_eff_sl, bar_index + 1, sim_eff_sl,
+                          color = i_col_sell, width = 2)
+    ln_h_tp1 := line.new(bar_index, sim_tp1, bar_index + 1, sim_tp1,
+                          color = i_col_buy,  width = 1)
+    ln_h_tp2 := i_use_tp2 ? line.new(bar_index, sim_tp2, bar_index + 1, sim_tp2,
+                          color = i_col_buy,  width = 1) : na
+    ln_h_tp3 := i_use_tp3 ? line.new(bar_index, sim_tp3, bar_index + 1, sim_tp3,
+                          color = i_col_buy,  width = 1) : na
+
+    // Right-edge chips for live read-off.
     lbl_sl  := label.new(bar_index + i_lbl_off, sim_sl,
                           "SL " + str.tostring(sim_sl, format.mintick),
                           style = label.style_label_left, color = color.new(i_col_sell, 50),
@@ -904,6 +946,27 @@ if just_opened_long or just_opened_short
                           "TP3 " + str.tostring(sim_tp3, format.mintick),
                           style = label.style_label_left, color = color.new(i_col_buy, 50),
                           textcolor = i_col_text, size = size.small) : na
+
+// Trail step (TP1→BE, TP2→TP1, TP3→TP2): freeze the current SL segment
+// at this bar and start a new SL line at the trailed eff_sl level. This
+// preserves the historical SL position (line.new is a single rigid
+// segment — updating y on the existing line would retroactively move
+// the whole historical segment).
+if st.evt_trail_step > 0 and (sim_long or sim_short) and not na(ln_h_sl)
+    line.set_x2(ln_h_sl, bar_index)
+    trail_clr = st.evt_trail_step == 1 ? i_col_be : i_col_buy
+    ln_h_sl := line.new(bar_index, sim_eff_sl, bar_index, sim_eff_sl,
+                         color = trail_clr, width = 2)
+
+// Active trade: extend horizontal lines + chips. Lines freeze when
+// sim_long/sim_short flip false on close (this block stops running).
+if (sim_long or sim_short) and not na(ln_h_sl)
+    line.set_x2(ln_h_sl,  bar_index)
+    line.set_x2(ln_h_tp1, bar_index)
+    if not na(ln_h_tp2)
+        line.set_x2(ln_h_tp2, bar_index)
+    if not na(ln_h_tp3)
+        line.set_x2(ln_h_tp3, bar_index)
 
 if (sim_long or sim_short) and not na(lbl_sl)
     label.set_x(lbl_sl,  bar_index + i_lbl_off)
@@ -949,16 +1012,10 @@ plotshape(closed_by_sl_long,  "SL Long",   shape.circle, location.belowbar,
 plotshape(closed_by_sl_short, "SL Short",  shape.circle, location.abovebar,
           color = i_col_sell, text = "SL",  textcolor = i_col_text, size = size.tiny)
 
-visible_lvl = sim_long or sim_short or just_closed_long or just_closed_short
-sl_plot   = visible_lvl ? sim_eff_sl : na
-tp1_plot  = visible_lvl ? sim_tp1 : na
-tp2_plot  = visible_lvl and i_use_tp2 ? sim_tp2 : na
-tp3_plot  = visible_lvl and i_use_tp3 ? sim_tp3 : na
-sl_clr    = sim_eff_sl_r >= 0 ? i_col_be : i_col_sell
-plot(sl_plot,  title = "SL line",  color = sl_clr,    style = plot.style_linebr, linewidth = 2)
-plot(tp1_plot, title = "TP1 line", color = i_col_buy, style = plot.style_linebr, linewidth = 1)
-plot(tp2_plot, title = "TP2 line", color = i_col_buy, style = plot.style_linebr, linewidth = 1)
-plot(tp3_plot, title = "TP3 line", color = i_col_buy, style = plot.style_linebr, linewidth = 1)
+// Horizontal SL/TP lines are now drawn via line.new (block above), so no
+// plot()-based series here. line.new doesn't connect between trades, so
+// the multi-position stair-step is gone, and historical trades' levels
+// stay visible as frozen line segments from entry to close.
 
 // =====================================================================
 // STATUS TABLE
