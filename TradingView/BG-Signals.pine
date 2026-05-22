@@ -224,17 +224,31 @@ type SigState
 // labels themselves, so we render the comparison on-chart instead.
 // =====================================================================
 type Suggestions
-    int   swing_len    = 2
-    int   bos_age      = 30
-    int   ob_age       = 60
-    float entry_atr    = 0.5
-    int   atr_per      = 14
-    float sl_buf       = 0.1
-    float min_sl       = 7.0
-    float min_sl_flt   = 5.0
-    int   atr_ma       = 50
-    int   cooldown     = 6
-    int   max_pos      = 2
+    // Structure Detection
+    int    swing_len    = 2
+    int    bos_age      = 30
+    int    ob_age       = 60
+    float  entry_atr    = 0.5
+    int    atr_per      = 14
+    float  sl_buf       = 0.1
+    float  min_sl       = 7.0
+    float  min_sl_flt   = 5.0
+    // HTF Bias
+    string htf_tf       = "60"
+    int    h1_fast      = 12
+    int    h1_slow      = 80
+    // Chop / Consolidation
+    bool   chop_on      = false
+    bool   strict_h1    = false
+    float  adx_min      = 20.0
+    int    adx_per      = 14
+    string adx_tf       = "15"
+    int    bos_conf     = 40
+    float  atr_exp      = 0.8
+    int    atr_ma       = 50
+    // Simulated Trades
+    int    cooldown     = 6
+    int    max_pos      = 2
 
 get_suggestions(string tf) =>
     Suggestions s = Suggestions.new()
@@ -248,6 +262,9 @@ get_suggestions(string tf) =>
         s.sl_buf     := 0.1
         s.min_sl     := 5.0
         s.min_sl_flt := 3.0
+        s.htf_tf     := "15"
+        s.adx_tf     := "5"
+        s.bos_conf   := 200
         s.cooldown   := 30
         s.max_pos    := 3
     else if tf == "15"
@@ -257,6 +274,9 @@ get_suggestions(string tf) =>
         s.sl_buf     := 0.15
         s.min_sl     := 10.0
         s.min_sl_flt := 7.0
+        s.htf_tf     := "240"
+        s.adx_tf     := "30"
+        s.bos_conf   := 30
         s.cooldown   := 4
         s.max_pos    := 2
     else if tf == "30"
@@ -266,6 +286,9 @@ get_suggestions(string tf) =>
         s.sl_buf     := 0.15
         s.min_sl     := 15.0
         s.min_sl_flt := 10.0
+        s.htf_tf     := "240"
+        s.adx_tf     := "60"
+        s.bos_conf   := 20
         s.cooldown   := 3
         s.max_pos    := 1
     else if tf == "60"
@@ -275,6 +298,9 @@ get_suggestions(string tf) =>
         s.sl_buf     := 0.2
         s.min_sl     := 25.0
         s.min_sl_flt := 15.0
+        s.htf_tf     := "D"
+        s.adx_tf     := "240"
+        s.bos_conf   := 10
         s.cooldown   := 2
         s.max_pos    := 1
     s
@@ -1061,7 +1087,7 @@ if i_show_tbl and barstate.islast
 // current value (orange when they differ, gray ✓ when they match).
 // Updates whenever the Signal TF input changes.
 // =====================================================================
-var table sug_tbl = table.new(pos_lookup(i_sug_pos), 3, 12,
+var table sug_tbl = table.new(pos_lookup(i_sug_pos), 3, 22,
                               bgcolor      = color.new(color.black, 20),
                               border_color = color.new(color.gray, 50),
                               border_width = 1,
@@ -1084,12 +1110,13 @@ f_sug_row(int _r, string _name, string _sug_v, string _cur_v, bool _match) =>
 float_eq(float _a, float _b) => math.abs(_a - _b) < 0.005
 
 if i_show_sug and barstate.islast
-    table.clear(sug_tbl, 0, 0, 2, 11)
+    table.clear(sug_tbl, 0, 0, 2, 21)
     Suggestions sug = get_suggestions(sig_tf)
 
     sug_tf_label = "SUGGESTED · " + sig_tf + " sig"
     f_sug_hdr(0, sug_tf_label, "sug", "you")
 
+    // -- Structure Detection --
     f_sug_row(1,  "Swing strength",   str.tostring(sug.swing_len),
                                        str.tostring(i_swing_len),  i_swing_len == sug.swing_len)
     f_sug_row(2,  "Max BOS age",      str.tostring(sug.bos_age),
@@ -1106,11 +1133,34 @@ if i_show_sug and barstate.islast
                                        str.tostring(i_min_sl, "0.0"),  float_eq(i_min_sl, sug.min_sl))
     f_sug_row(8,  "Min SL filter $",  str.tostring(sug.min_sl_flt, "0.0"),
                                        str.tostring(i_min_sl_flt, "0.0"), float_eq(i_min_sl_flt, sug.min_sl_flt))
-    f_sug_row(9,  "ATR MA period",    str.tostring(sug.atr_ma),
+    // -- HTF Bias --
+    f_sug_row(9,  "HTF timeframe",    sug.htf_tf,
+                                       i_h1_tf,                    i_h1_tf == sug.htf_tf)
+    f_sug_row(10, "HTF fast EMA",     str.tostring(sug.h1_fast),
+                                       str.tostring(i_h1_fast),    i_h1_fast == sug.h1_fast)
+    f_sug_row(11, "HTF slow EMA",     str.tostring(sug.h1_slow),
+                                       str.tostring(i_h1_slow),    i_h1_slow == sug.h1_slow)
+    // -- Chop / Consolidation --
+    f_sug_row(12, "Chop filter",      sug.chop_on ? "ON" : "OFF",
+                                       i_chop_on ? "ON" : "OFF",   i_chop_on == sug.chop_on)
+    f_sug_row(13, "Strict H1",        sug.strict_h1 ? "ON" : "OFF",
+                                       i_strict_h1 ? "ON" : "OFF", i_strict_h1 == sug.strict_h1)
+    f_sug_row(14, "ADX minimum",      str.tostring(sug.adx_min, "0.0"),
+                                       str.tostring(i_adx_min, "0.0"), float_eq(i_adx_min, sug.adx_min))
+    f_sug_row(15, "ADX period",       str.tostring(sug.adx_per),
+                                       str.tostring(i_adx_per),    i_adx_per == sug.adx_per)
+    f_sug_row(16, "ADX timeframe",    sug.adx_tf,
+                                       i_adx_tf,                   i_adx_tf == sug.adx_tf)
+    f_sug_row(17, "Whipsaw bars",     str.tostring(sug.bos_conf),
+                                       str.tostring(i_bos_conf),   i_bos_conf == sug.bos_conf)
+    f_sug_row(18, "ATR exp ratio",    str.tostring(sug.atr_exp, "0.00"),
+                                       str.tostring(i_atr_exp, "0.00"), float_eq(i_atr_exp, sug.atr_exp))
+    f_sug_row(19, "ATR MA period",    str.tostring(sug.atr_ma),
                                        str.tostring(i_atr_ma),     i_atr_ma == sug.atr_ma)
-    f_sug_row(10, "Cooldown bars",    str.tostring(sug.cooldown),
+    // -- Simulated Trades --
+    f_sug_row(20, "Cooldown bars",    str.tostring(sug.cooldown),
                                        str.tostring(i_cooldown),   i_cooldown == sug.cooldown)
-    f_sug_row(11, "Max positions",    str.tostring(sug.max_pos),
+    f_sug_row(21, "Max positions",    str.tostring(sug.max_pos),
                                        str.tostring(i_max_pos),    i_max_pos == sug.max_pos)
 
 // =====================================================================
