@@ -1242,7 +1242,9 @@ f_cell(int _row, int _col, string _txt, color _clr) =>
     table.cell(tbl, _col, _row, _txt, text_color=_clr, text_size=size.small, text_halign=text.align_left)
 
 sig_diff       = i_sig_tf != "" and i_sig_tf != timeframe.period
-title_col1_txt = sig_diff ? "sig " + i_sig_tf : "v6"
+// Title chip color-codes mode: AUTO when sig TF is set (suggestions
+// override inputs), MANUAL when sig TF = Chart (inputs are live).
+title_col1_txt = i_sig_tf != "" ? "AUTO " + i_sig_tf : "MANUAL"
 
 if i_show_tbl and barstate.islast
     table.clear(tbl, 0, 0, 1, 18)
@@ -1372,8 +1374,14 @@ if i_show_sug and barstate.islast
     table.clear(sug_tbl, 0, 0, 2, 21)
     Suggestions sug = get_suggestions(sig_tf)
 
-    sug_tf_label = "SUGGESTED · " + sig_tf + " sig"
-    f_sug_hdr(0, sug_tf_label, "sug", "you")
+    // Header makes it explicit whether auto-apply is overriding the
+    // input boxes or whether the user's manual inputs are live. When
+    // sig TF is set, eff_* = sug.* (script uses suggestions); when sig
+    // TF = Chart, eff_* = i_* (script uses input boxes).
+    auto_mode = i_sig_tf != ""
+    sug_tf_label = auto_mode ? "AUTO · " + sig_tf + " sig" : "MANUAL · " + sig_tf
+    sug_you_lbl  = auto_mode ? "active" : "you"
+    f_sug_hdr(0, sug_tf_label, "sug", sug_you_lbl)
 
     // The "you" column shows the EFFECTIVE value being used (eff_*).
     // When sig TF is set to a specific TF, the eff_* values equal the
