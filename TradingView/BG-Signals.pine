@@ -1376,64 +1376,65 @@ if i_show_sug and barstate.islast
 
     // Header makes it explicit whether auto-apply is overriding the
     // input boxes or whether the user's manual inputs are live. When
-    // sig TF is set, eff_* = sug.* (script uses suggestions); when sig
-    // TF = Chart, eff_* = i_* (script uses input boxes).
+    // sig TF is set, the script uses suggestions; when sig TF = Chart,
+    // the script uses input boxes. Either way the "you" column shows
+    // the raw input box values so the user can see what they have set.
     auto_mode = i_sig_tf != ""
     sug_tf_label = auto_mode ? "AUTO · " + sig_tf + " sig" : "MANUAL · " + sig_tf
-    sug_you_lbl  = auto_mode ? "active" : "you"
-    f_sug_hdr(0, sug_tf_label, "sug", sug_you_lbl)
+    f_sug_hdr(0, sug_tf_label, "sug", "you")
 
-    // The "you" column shows the EFFECTIVE value being used (eff_*).
-    // When sig TF is set to a specific TF, the eff_* values equal the
-    // suggested values (auto-applied), so all rows display green ✓.
-    // When sig TF = Chart, eff_* equals the user's manual i_* inputs.
+    // The "you" column shows your raw INPUT BOX values (i_*), not the
+    // effective overrides. So in AUTO mode you can see at a glance
+    // which inputs differ from the suggestions — the script is using
+    // the suggestions regardless, but the orange cells tell you what's
+    // mismatched in your config if you ever switch back to MANUAL.
     //
     // -- Structure Detection --
     f_sug_row(1,  "Swing strength",   str.tostring(sug.swing_len),
-                                       str.tostring(eff_swing_len),  eff_swing_len == sug.swing_len)
+                                       str.tostring(i_swing_len),  i_swing_len == sug.swing_len)
     f_sug_row(2,  "Max BOS age",      str.tostring(sug.bos_age),
-                                       str.tostring(eff_bos_age),    eff_bos_age == sug.bos_age)
+                                       str.tostring(i_bos_age),    i_bos_age == sug.bos_age)
     f_sug_row(3,  "Max OB lookback",  str.tostring(sug.ob_age),
-                                       str.tostring(eff_ob_age),     eff_ob_age == sug.ob_age)
+                                       str.tostring(i_ob_age),     i_ob_age == sug.ob_age)
     f_sug_row(4,  "Entry × ATR",      str.tostring(sug.entry_atr, "0.0"),
-                                       str.tostring(eff_entry_atr, "0.0"), float_eq(eff_entry_atr, sug.entry_atr))
+                                       str.tostring(i_entry_atr, "0.0"), float_eq(i_entry_atr, sug.entry_atr))
     f_sug_row(5,  "ATR period",       str.tostring(sug.atr_per),
-                                       str.tostring(eff_atr_per),    eff_atr_per == sug.atr_per)
+                                       str.tostring(i_atr_per),    i_atr_per == sug.atr_per)
     f_sug_row(6,  "SL buf × ATR",     str.tostring(sug.sl_buf, "0.00"),
-                                       str.tostring(eff_sl_buf, "0.00"), float_eq(eff_sl_buf, sug.sl_buf))
+                                       str.tostring(i_sl_buf, "0.00"), float_eq(i_sl_buf, sug.sl_buf))
     f_sug_row(7,  "Min SL clamp $",   str.tostring(sug.min_sl, "0.0"),
-                                       str.tostring(eff_min_sl, "0.0"),  float_eq(eff_min_sl, sug.min_sl))
+                                       str.tostring(i_min_sl, "0.0"),  float_eq(i_min_sl, sug.min_sl))
     f_sug_row(8,  "Min SL filter $",  str.tostring(sug.min_sl_flt, "0.0"),
-                                       str.tostring(eff_min_sl_flt, "0.0"), float_eq(eff_min_sl_flt, sug.min_sl_flt))
+                                       str.tostring(i_min_sl_flt, "0.0"), float_eq(i_min_sl_flt, sug.min_sl_flt))
     // -- HTF Bias --
     f_sug_row(9,  "HTF timeframe",    sug.htf_tf,
-                                       eff_h1_tf,                    eff_h1_tf == sug.htf_tf)
+                                       i_h1_tf,                    i_h1_tf == sug.htf_tf)
     f_sug_row(10, "HTF fast EMA",     str.tostring(sug.h1_fast),
-                                       str.tostring(eff_h1_fast),    eff_h1_fast == sug.h1_fast)
+                                       str.tostring(i_h1_fast),    i_h1_fast == sug.h1_fast)
     f_sug_row(11, "HTF slow EMA",     str.tostring(sug.h1_slow),
-                                       str.tostring(eff_h1_slow),    eff_h1_slow == sug.h1_slow)
+                                       str.tostring(i_h1_slow),    i_h1_slow == sug.h1_slow)
     // -- Chop / Consolidation --
     f_sug_row(12, "Chop filter",      sug.chop_on ? "ON" : "OFF",
-                                       eff_chop_on ? "ON" : "OFF",   eff_chop_on == sug.chop_on)
+                                       i_chop_on ? "ON" : "OFF",   i_chop_on == sug.chop_on)
     f_sug_row(13, "Strict H1",        sug.strict_h1 ? "ON" : "OFF",
-                                       eff_strict_h1 ? "ON" : "OFF", eff_strict_h1 == sug.strict_h1)
+                                       i_strict_h1 ? "ON" : "OFF", i_strict_h1 == sug.strict_h1)
     f_sug_row(14, "ADX minimum",      str.tostring(sug.adx_min, "0.0"),
-                                       str.tostring(eff_adx_min, "0.0"), float_eq(eff_adx_min, sug.adx_min))
+                                       str.tostring(i_adx_min, "0.0"), float_eq(i_adx_min, sug.adx_min))
     f_sug_row(15, "ADX period",       str.tostring(sug.adx_per),
-                                       str.tostring(eff_adx_per),    eff_adx_per == sug.adx_per)
+                                       str.tostring(i_adx_per),    i_adx_per == sug.adx_per)
     f_sug_row(16, "ADX timeframe",    sug.adx_tf,
-                                       eff_adx_tf,                   eff_adx_tf == sug.adx_tf)
+                                       i_adx_tf,                   i_adx_tf == sug.adx_tf)
     f_sug_row(17, "Whipsaw bars",     str.tostring(sug.bos_conf),
-                                       str.tostring(eff_bos_conf),   eff_bos_conf == sug.bos_conf)
+                                       str.tostring(i_bos_conf),   i_bos_conf == sug.bos_conf)
     f_sug_row(18, "ATR exp ratio",    str.tostring(sug.atr_exp, "0.00"),
-                                       str.tostring(eff_atr_exp, "0.00"), float_eq(eff_atr_exp, sug.atr_exp))
+                                       str.tostring(i_atr_exp, "0.00"), float_eq(i_atr_exp, sug.atr_exp))
     f_sug_row(19, "ATR MA period",    str.tostring(sug.atr_ma),
-                                       str.tostring(eff_atr_ma),     eff_atr_ma == sug.atr_ma)
+                                       str.tostring(i_atr_ma),     i_atr_ma == sug.atr_ma)
     // -- Simulated Trades --
     f_sug_row(20, "Cooldown bars",    str.tostring(sug.cooldown),
-                                       str.tostring(eff_cooldown),   eff_cooldown == sug.cooldown)
+                                       str.tostring(i_cooldown),   i_cooldown == sug.cooldown)
     f_sug_row(21, "Max positions",    str.tostring(sug.max_pos),
-                                       str.tostring(eff_max_pos),    eff_max_pos == sug.max_pos)
+                                       str.tostring(i_max_pos),    i_max_pos == sug.max_pos)
 
 // =====================================================================
 // ALERTS
