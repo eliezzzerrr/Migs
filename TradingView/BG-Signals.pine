@@ -40,7 +40,7 @@ indicator("BG Signals",
 // =====================================================================
 g_struct    = "Structure Detection"
 i_sig_tf    = input.timeframe("", "Signal timeframe (empty = chart TF)", group=g_struct,
-     tooltip="Run the full signal + sim pipeline on this timeframe regardless of the chart's TF. e.g., set to \"1\" to compute 1-minute signals while viewing a 15m chart. \n\nAUTO-APPLY: when this is set to a specific TF (1, 5, 15, 30, 60), the script OVERRIDES all parameter inputs below with the suggested values for that TF — the input boxes still show whatever you typed, but the script uses the suggestions. Set this to \"Chart\" (empty) to use the input boxes as manual values instead. \n\nWhen sig TF is lower than chart TF, trades that open AND close inside a single chart bar may not render visually, but sim stats accumulate correctly on the sig TF.")
+     tooltip="Run the full signal + sim pipeline on this timeframe regardless of the chart's TF. e.g., set to \"1\" to compute 1-minute signals while viewing a 15m chart. Empty = chart TF. When sig TF is lower than chart TF, trades that open AND close inside a single chart bar may not render visually, but sim stats accumulate correctly on the sig TF.")
 i_swing_len = input.int(1,    "Swing pivot strength (bars L/R)", minval=1, group=g_struct,
      tooltip="Bars needed on each side of a pivot to confirm it. Suggested by TF: 1m=3, 5m=2, 15m=2, 30m=2, 1H=2. Higher = fewer / cleaner swings. Lower = more sensitive (noisy on fast TFs).")
 i_bos_age   = input.int(30,   "Max BOS age (bars)",              minval=1, group=g_struct,
@@ -132,188 +132,6 @@ i_col_buy   = input.color(color.new(#26a69a, 0),  "Buy / TP accent",  group=g_co
 i_col_sell  = input.color(color.new(#ef5350, 0),  "Sell / SL accent", group=g_colors)
 i_col_be    = input.color(color.new(#26c6da, 0),  "SL → BE color",    group=g_colors)
 i_col_text  = input.color(color.white, "Label text",                 group=g_colors)
-
-// =====================================================================
-// EFFECTIVE PARAMETERS — when Signal TF is set to a specific TF (1, 5,
-// 15, 30, 60), the values for THAT TF override the manual inputs. When
-// Signal TF = Chart (empty), the user's manual inputs apply.
-//
-// Implemented as switch-per-param so result types stay `simple` —
-// required by ta.atr / ta.ema / for-loop bounds / request.security TF
-// arguments. A series-typed conditional here would break many of those
-// downstream calls.
-//
-// Static-suggestion params (HTF EMAs, ADX min/period, ATR exp ratio,
-// ATR MA period) still get a switch so the auto-apply behavior is
-// consistent — manual inputs are honored ONLY when sig TF = Chart.
-// =====================================================================
-eff_swing_len = switch i_sig_tf
-    "1"  => 3
-    "5"  => 2
-    "15" => 2
-    "30" => 2
-    "60" => 2
-    => i_swing_len
-
-eff_bos_age = switch i_sig_tf
-    "1"  => 150
-    "5"  => 30
-    "15" => 20
-    "30" => 15
-    "60" => 10
-    => i_bos_age
-
-eff_ob_age = switch i_sig_tf
-    "1"  => 300
-    "5"  => 60
-    "15" => 40
-    "30" => 30
-    "60" => 25
-    => i_ob_age
-
-eff_entry_atr = switch i_sig_tf
-    "1"  => 0.3
-    "5"  => 0.5
-    "15" => 0.7
-    "30" => 0.7
-    "60" => 0.7
-    => i_entry_atr
-
-eff_atr_per = switch i_sig_tf
-    "1"  => 50
-    "5"  => 14
-    "15" => 14
-    "30" => 14
-    "60" => 14
-    => i_atr_per
-
-eff_sl_buf = switch i_sig_tf
-    "1"  => 0.1
-    "5"  => 0.1
-    "15" => 0.15
-    "30" => 0.15
-    "60" => 0.2
-    => i_sl_buf
-
-eff_min_sl = switch i_sig_tf
-    "1"  => 5.0
-    "5"  => 7.0
-    "15" => 10.0
-    "30" => 15.0
-    "60" => 25.0
-    => i_min_sl
-
-eff_min_sl_flt = switch i_sig_tf
-    "1"  => 3.0
-    "5"  => 5.0
-    "15" => 7.0
-    "30" => 10.0
-    "60" => 15.0
-    => i_min_sl_flt
-
-eff_h1_tf = switch i_sig_tf
-    "1"  => "15"
-    "5"  => "60"
-    "15" => "240"
-    "30" => "240"
-    "60" => "D"
-    => i_h1_tf
-
-eff_h1_fast = switch i_sig_tf
-    "1"  => 12
-    "5"  => 12
-    "15" => 12
-    "30" => 12
-    "60" => 12
-    => i_h1_fast
-
-eff_h1_slow = switch i_sig_tf
-    "1"  => 80
-    "5"  => 80
-    "15" => 80
-    "30" => 80
-    "60" => 80
-    => i_h1_slow
-
-eff_chop_on = switch i_sig_tf
-    "1"  => false
-    "5"  => false
-    "15" => true
-    "30" => true
-    "60" => true
-    => i_chop_on
-
-eff_strict_h1 = switch i_sig_tf
-    "1"  => false
-    "5"  => false
-    "15" => true
-    "30" => true
-    "60" => true
-    => i_strict_h1
-
-eff_adx_min = switch i_sig_tf
-    "1"  => 20.0
-    "5"  => 20.0
-    "15" => 20.0
-    "30" => 20.0
-    "60" => 20.0
-    => i_adx_min
-
-eff_adx_per = switch i_sig_tf
-    "1"  => 14
-    "5"  => 14
-    "15" => 14
-    "30" => 14
-    "60" => 14
-    => i_adx_per
-
-eff_adx_tf = switch i_sig_tf
-    "1"  => "5"
-    "5"  => "15"
-    "15" => "30"
-    "30" => "60"
-    "60" => "240"
-    => i_adx_tf
-
-eff_bos_conf = switch i_sig_tf
-    "1"  => 200
-    "5"  => 40
-    "15" => 30
-    "30" => 20
-    "60" => 10
-    => i_bos_conf
-
-eff_atr_exp = switch i_sig_tf
-    "1"  => 0.8
-    "5"  => 0.8
-    "15" => 0.8
-    "30" => 0.8
-    "60" => 0.8
-    => i_atr_exp
-
-eff_atr_ma = switch i_sig_tf
-    "1"  => 50
-    "5"  => 50
-    "15" => 50
-    "30" => 50
-    "60" => 50
-    => i_atr_ma
-
-eff_cooldown = switch i_sig_tf
-    "1"  => 30
-    "5"  => 6
-    "15" => 4
-    "30" => 3
-    "60" => 2
-    => i_cooldown
-
-eff_max_pos = switch i_sig_tf
-    "1"  => 3
-    "5"  => 2
-    "15" => 2
-    "30" => 1
-    "60" => 1
-    => i_max_pos
 
 // =====================================================================
 // TRADE UDT — per-position state. Held in array<Trade> inside the sig-TF
@@ -510,24 +328,24 @@ calc_adx(int _period) =>
 // =====================================================================
 compute_sig_state() =>
     // -- Volatility --
-    atr_val    = ta.atr(eff_atr_per)
-    atr_ma_val = ta.sma(atr_val, eff_atr_ma)
+    atr_val    = ta.atr(i_atr_per)
+    atr_ma_val = ta.sma(atr_val, i_atr_ma)
     atr_ratio  = atr_ma_val > 0 ? atr_val / atr_ma_val : 1.0
 
     // -- 1H bias (nested HTF request from sig-TF context) --
-    h1_close = request.security(syminfo.tickerid, eff_h1_tf, close, barmerge.gaps_off, barmerge.lookahead_off)
-    h1_fast  = request.security(syminfo.tickerid, eff_h1_tf, ta.ema(close, eff_h1_fast), barmerge.gaps_off, barmerge.lookahead_off)
-    h1_slow  = request.security(syminfo.tickerid, eff_h1_tf, ta.ema(close, eff_h1_slow), barmerge.gaps_off, barmerge.lookahead_off)
+    h1_close = request.security(syminfo.tickerid, i_h1_tf, close, barmerge.gaps_off, barmerge.lookahead_off)
+    h1_fast  = request.security(syminfo.tickerid, i_h1_tf, ta.ema(close, i_h1_fast), barmerge.gaps_off, barmerge.lookahead_off)
+    h1_slow  = request.security(syminfo.tickerid, i_h1_tf, ta.ema(close, i_h1_slow), barmerge.gaps_off, barmerge.lookahead_off)
     h1_bull  = h1_fast > h1_slow and h1_close > h1_fast
     h1_bear  = h1_fast < h1_slow and h1_close < h1_fast
     h1_bias_s = h1_bull ? "bullish" : h1_bear ? "bearish" : "ranging"
 
     // -- ADX --
-    adx_val = request.security(syminfo.tickerid, eff_adx_tf, calc_adx(eff_adx_per), barmerge.gaps_off, barmerge.lookahead_off)
+    adx_val = request.security(syminfo.tickerid, i_adx_tf, calc_adx(i_adx_per), barmerge.gaps_off, barmerge.lookahead_off)
 
     // -- Swings / BOS / OB --
-    ph = ta.pivothigh(eff_swing_len, eff_swing_len)
-    pl = ta.pivotlow (eff_swing_len, eff_swing_len)
+    ph = ta.pivothigh(i_swing_len, i_swing_len)
+    pl = ta.pivotlow (i_swing_len, i_swing_len)
 
     var float last_sh    = na
     var int   last_sh_bi = na
@@ -536,10 +354,10 @@ compute_sig_state() =>
 
     if not na(ph)
         last_sh    := ph
-        last_sh_bi := bar_index - eff_swing_len
+        last_sh_bi := bar_index - i_swing_len
     if not na(pl)
         last_sl    := pl
-        last_sl_bi := bar_index - eff_swing_len
+        last_sl_bi := bar_index - i_swing_len
 
     bull_bos = not na(last_sh) and close > last_sh and close[1] <= last_sh
     bear_bos = not na(last_sl) and close < last_sl and close[1] >= last_sl
@@ -561,9 +379,9 @@ compute_sig_state() =>
         bos_bar         := bar_index
         last_bear_bos_b := bar_index
 
-    if active_bull_bos and (bar_index - bos_bar) > eff_bos_age
+    if active_bull_bos and (bar_index - bos_bar) > i_bos_age
         active_bull_bos := false
-    if active_bear_bos and (bar_index - bos_bar) > eff_bos_age
+    if active_bear_bos and (bar_index - bos_bar) > i_bos_age
         active_bear_bos := false
 
     var float ob_high   = na
@@ -575,7 +393,7 @@ compute_sig_state() =>
         ob_high := na
         ob_low  := na
         ob_bar  := na
-        for i = 1 to math.min(eff_ob_age, bar_index - 1)
+        for i = 1 to math.min(i_ob_age, bar_index - 1)
             if close[i] < open[i]
                 ob_high   := high[i]
                 ob_low    := low[i]
@@ -587,7 +405,7 @@ compute_sig_state() =>
         ob_high := na
         ob_low  := na
         ob_bar  := na
-        for i = 1 to math.min(eff_ob_age, bar_index - 1)
+        for i = 1 to math.min(i_ob_age, bar_index - 1)
             if close[i] > open[i]
                 ob_high   := high[i]
                 ob_low    := low[i]
@@ -596,29 +414,29 @@ compute_sig_state() =>
                 break
 
     // -- Chop filter --
-    whipsaw_for_bull = eff_bos_conf > 0 and not na(last_bear_bos_b) and (bar_index - last_bear_bos_b) < eff_bos_conf
-    whipsaw_for_bear = eff_bos_conf > 0 and not na(last_bull_bos_b) and (bar_index - last_bull_bos_b) < eff_bos_conf
+    whipsaw_for_bull = i_bos_conf > 0 and not na(last_bear_bos_b) and (bar_index - last_bear_bos_b) < i_bos_conf
+    whipsaw_for_bear = i_bos_conf > 0 and not na(last_bull_bos_b) and (bar_index - last_bull_bos_b) < i_bos_conf
 
     chop_reason_bull = ""
     chop_reason_bear = ""
 
-    if eff_chop_on
-        if eff_strict_h1 and not h1_bull and not h1_bear
+    if i_chop_on
+        if i_strict_h1 and not h1_bull and not h1_bear
             chop_reason_bull := "1H bias ranging"
             chop_reason_bear := "1H bias ranging"
         else
-            if eff_adx_min > 0 and adx_val < eff_adx_min
-                adx_msg = "ADX " + str.tostring(adx_val, "0.0") + " < " + str.tostring(eff_adx_min, "0.0")
+            if i_adx_min > 0 and adx_val < i_adx_min
+                adx_msg = "ADX " + str.tostring(adx_val, "0.0") + " < " + str.tostring(i_adx_min, "0.0")
                 chop_reason_bull := adx_msg
                 chop_reason_bear := adx_msg
-            if chop_reason_bull == "" and eff_atr_exp > 0 and atr_ratio < eff_atr_exp
-                atr_msg = "ATR squeeze " + str.tostring(atr_ratio, "0.00") + " < " + str.tostring(eff_atr_exp, "0.00")
+            if chop_reason_bull == "" and i_atr_exp > 0 and atr_ratio < i_atr_exp
+                atr_msg = "ATR squeeze " + str.tostring(atr_ratio, "0.00") + " < " + str.tostring(i_atr_exp, "0.00")
                 chop_reason_bull := atr_msg
                 chop_reason_bear := atr_msg
             if chop_reason_bull == "" and whipsaw_for_bull
-                chop_reason_bull := "whipsaw: bear BOS in " + str.tostring(eff_bos_conf) + " bars"
+                chop_reason_bull := "whipsaw: bear BOS in " + str.tostring(i_bos_conf) + " bars"
             if chop_reason_bear == "" and whipsaw_for_bear
-                chop_reason_bear := "whipsaw: bull BOS in " + str.tostring(eff_bos_conf) + " bars"
+                chop_reason_bear := "whipsaw: bull BOS in " + str.tostring(i_bos_conf) + " bars"
 
     // -- Setup detection --
     have_ob_bull = active_bull_bos and not na(ob_high) and ob_demand
@@ -627,11 +445,11 @@ compute_sig_state() =>
     dist_bull = have_ob_bull ? (close > ob_high ? close - ob_high : 0.0) : na
     dist_bear = have_ob_bear ? (close < ob_low  ? ob_low  - close : 0.0) : na
 
-    near_bull = have_ob_bull and not na(dist_bull) and dist_bull <= eff_entry_atr * atr_val
-    near_bear = have_ob_bear and not na(dist_bear) and dist_bear <= eff_entry_atr * atr_val
+    near_bull = have_ob_bull and not na(dist_bull) and dist_bull <= i_entry_atr * atr_val
+    near_bear = have_ob_bear and not na(dist_bear) and dist_bear <= i_entry_atr * atr_val
 
-    h1_ok_bull = not i_req_h1 or h1_bull or (not h1_bear and not eff_strict_h1)
-    h1_ok_bear = not i_req_h1 or h1_bear or (not h1_bull and not eff_strict_h1)
+    h1_ok_bull = not i_req_h1 or h1_bull or (not h1_bear and not i_strict_h1)
+    h1_ok_bear = not i_req_h1 or h1_bear or (not h1_bull and not i_strict_h1)
 
     bull_setup = have_ob_bull and near_bull and h1_ok_bull and chop_reason_bull == ""
     bear_setup = have_ob_bear and near_bear and h1_ok_bear and chop_reason_bear == ""
@@ -667,7 +485,7 @@ compute_sig_state() =>
     // Cooldown: only blocks when zero trades are open (multi-position mode
     // shouldn't wait between trades, only after the bench fully empties).
     cooldown_ok = array.size(active_trades) > 0 or
-      na(sim_close_bar) or (bar_index - sim_close_bar) >= eff_cooldown
+      na(sim_close_bar) or (bar_index - sim_close_bar) >= i_cooldown
 
     // -- Date range filter (PHT live-rolling current week / month) --
     curmonth_y     = year(timenow,  "Asia/Manila")
@@ -732,16 +550,16 @@ compute_sig_state() =>
     // bar is inside date/session windows, bar is confirmed. The Min SL
     // filter rejects setups whose OB-derived SL is too tight BEFORE the
     // clamp widens it (so the filter sees the natural OB size).
-    if i_sim_on and array.size(active_trades) < eff_max_pos and cooldown_ok and in_date_range and in_session and barstate.isconfirmed
+    if i_sim_on and array.size(active_trades) < i_max_pos and cooldown_ok and in_date_range and in_session and barstate.isconfirmed
         if bull_setup
-            raw_sl  = ob_low - eff_sl_buf * atr_val
+            raw_sl  = ob_low - i_sl_buf * atr_val
             raw_dst = close - raw_sl
             // Min SL filter (reject path)
-            if eff_min_sl_flt <= 0 or raw_dst >= eff_min_sl_flt
+            if i_min_sl_flt <= 0 or raw_dst >= i_min_sl_flt
                 final_sl = raw_sl
                 // Min SL clamp (widen path)
-                if eff_min_sl > 0 and raw_dst < eff_min_sl
-                    final_sl := close - eff_min_sl
+                if i_min_sl > 0 and raw_dst < i_min_sl
+                    final_sl := close - i_min_sl
                 risk = close - final_sl
                 if risk > 0
                     Trade t = Trade.new()
@@ -763,12 +581,12 @@ compute_sig_state() =>
                     sim_count       += 1
                     evt_open_long   := true
         else if bear_setup
-            raw_sl  = ob_high + eff_sl_buf * atr_val
+            raw_sl  = ob_high + i_sl_buf * atr_val
             raw_dst = raw_sl - close
-            if eff_min_sl_flt <= 0 or raw_dst >= eff_min_sl_flt
+            if i_min_sl_flt <= 0 or raw_dst >= i_min_sl_flt
                 final_sl = raw_sl
-                if eff_min_sl > 0 and raw_dst < eff_min_sl
-                    final_sl := close + eff_min_sl
+                if i_min_sl > 0 and raw_dst < i_min_sl
+                    final_sl := close + i_min_sl
                 risk = final_sl - close
                 if risk > 0
                     Trade t = Trade.new()
@@ -1242,9 +1060,7 @@ f_cell(int _row, int _col, string _txt, color _clr) =>
     table.cell(tbl, _col, _row, _txt, text_color=_clr, text_size=size.small, text_halign=text.align_left)
 
 sig_diff       = i_sig_tf != "" and i_sig_tf != timeframe.period
-// Title chip color-codes mode: AUTO when sig TF is set (suggestions
-// override inputs), MANUAL when sig TF = Chart (inputs are live).
-title_col1_txt = i_sig_tf != "" ? "AUTO " + i_sig_tf : "MANUAL"
+title_col1_txt = sig_diff ? "sig " + i_sig_tf : "v6"
 
 if i_show_tbl and barstate.islast
     table.clear(tbl, 0, 0, 1, 18)
@@ -1281,11 +1097,11 @@ if i_show_tbl and barstate.islast
     f_cell(3, 0, "1H Bias",   color.white)
     f_cell(3, 1, h1_bias_s,   h1_bull ? color.lime : h1_bear ? color.red : color.silver)
 
-    adx_clr = eff_adx_min > 0 and adx_val < eff_adx_min ? color.red : color.lime
-    f_cell(4, 0, "ADX(" + eff_adx_tf + ")", color.white)
+    adx_clr = i_adx_min > 0 and adx_val < i_adx_min ? color.red : color.lime
+    f_cell(4, 0, "ADX(" + i_adx_tf + ")", color.white)
     f_cell(4, 1, str.tostring(adx_val, "0.0"), adx_clr)
 
-    atr_clr = eff_atr_exp > 0 and atr_ratio < eff_atr_exp ? color.red : color.lime
+    atr_clr = i_atr_exp > 0 and atr_ratio < i_atr_exp ? color.red : color.lime
     f_cell(5, 0, "ATR ratio", color.white)
     f_cell(5, 1, str.tostring(atr_ratio, "0.00"), atr_clr)
 
@@ -1294,8 +1110,8 @@ if i_show_tbl and barstate.islast
     f_cell(6, 1, chop_now,    chop_now == "OK" ? color.lime : color.orange)
 
     f_cell(7, 0, "Slots",     color.white)
-    f_cell(7, 1, str.tostring(active_count) + " / " + str.tostring(eff_max_pos),
-                  active_count >= eff_max_pos ? color.orange : color.silver)
+    f_cell(7, 1, str.tostring(active_count) + " / " + str.tostring(i_max_pos),
+                  active_count >= i_max_pos ? color.orange : color.silver)
 
     f_cell(8, 0, "Sim trades", color.white)
     f_cell(8, 1, str.tostring(sim_count) + "  W:" + str.tostring(sim_wins) +
@@ -1374,21 +1190,9 @@ if i_show_sug and barstate.islast
     table.clear(sug_tbl, 0, 0, 2, 21)
     Suggestions sug = get_suggestions(sig_tf)
 
-    // Header makes it explicit whether auto-apply is overriding the
-    // input boxes or whether the user's manual inputs are live. When
-    // sig TF is set, the script uses suggestions; when sig TF = Chart,
-    // the script uses input boxes. Either way the "you" column shows
-    // the raw input box values so the user can see what they have set.
-    auto_mode = i_sig_tf != ""
-    sug_tf_label = auto_mode ? "AUTO · " + sig_tf + " sig" : "MANUAL · " + sig_tf
+    sug_tf_label = "SUGGESTED · " + sig_tf + " sig"
     f_sug_hdr(0, sug_tf_label, "sug", "you")
 
-    // The "you" column shows your raw INPUT BOX values (i_*), not the
-    // effective overrides. So in AUTO mode you can see at a glance
-    // which inputs differ from the suggestions — the script is using
-    // the suggestions regardless, but the orange cells tell you what's
-    // mismatched in your config if you ever switch back to MANUAL.
-    //
     // -- Structure Detection --
     f_sug_row(1,  "Swing strength",   str.tostring(sug.swing_len),
                                        str.tostring(i_swing_len),  i_swing_len == sug.swing_len)
