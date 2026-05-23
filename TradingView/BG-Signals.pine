@@ -802,10 +802,22 @@ compute_sig_state() =>
                 else
                     r_realized := t.eff_sl_r
                 sim_total_r += r_realized
-                sim_losses  += 1
+                // SL hit while trailed (eff_sl_r >= 0 means it sat at BE,
+                // TP1, or TP2) counts as a WIN — the trade reached at
+                // least its first target before the trail caught up.
+                // Only an untrailed SL hit (original level, eff_sl_r = -1)
+                // counts as a true loss.
+                sl_was_trailed = t.eff_sl_r >= 0
+                if sl_was_trailed
+                    sim_wins += 1
+                else
+                    sim_losses += 1
                 if opened_today
-                    day_r_today      += r_realized
-                    day_losses_today += 1
+                    day_r_today += r_realized
+                    if sl_was_trailed
+                        day_wins_today += 1
+                    else
+                        day_losses_today += 1
                 if t.is_long
                     evt_close_long_sl  := true
                 else
