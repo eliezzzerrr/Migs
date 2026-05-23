@@ -101,34 +101,34 @@ i_use_sessions = input.bool(false, "Limit simulation to selected sessions", grou
      tooltip="When ON, the sim only OPENS new trades during ticked killzones. Existing trades resolve naturally. Untick all killzones (or untick this master) to allow all hours.")
 i_show_kz      = input.bool(true,  "Show Killzone Boxes", inline="KZ_SHOW", group=g_sess)
 i_show_kz_txt  = input.bool(true,  "Display Text",        inline="KZ_SHOW", group=g_sess)
-i_kz_tz        = input.string("America/New_York", "Timezone",
+i_kz_tz        = input.string("GMT+8", "Timezone",
      options=['America/New_York','GMT-12','GMT-11','GMT-10','GMT-9','GMT-8','GMT-7','GMT-6','GMT-5','GMT-4','GMT-3','GMT-2','GMT-1','GMT+0','GMT+1','GMT+2','GMT+3','GMT+4','GMT+5','GMT+6','GMT+7','GMT+8','GMT+9','GMT+10','GMT+11','GMT+12','GMT+13','GMT+14'],
      group=g_sess,
-     tooltip="All killzone times below are interpreted in this timezone. America/New_York follows DST. GMT offsets are fixed and don't track DST.")
+     tooltip="All killzone times below are interpreted in this timezone. Default GMT+8 = PHT (Philippine Time, no DST). Switch to America/New_York if you want session times entered as NY local with DST auto-handled. NOTE: the default session times below are aligned to PHT during NY summer (EDT, Mar-Nov). During NY winter (EST, Nov-Mar) the actual NY sessions land 1 hour later in PHT — adjust the times by +1 hour, or switch the timezone to America/New_York for hands-off DST.")
 
 i_use_asia     = input.bool(true,  "", inline="ASIA",   group=g_sess)
 i_asia_txt     = input.string("Asia",      "", inline="ASIA",   group=g_sess)
-i_asia_sess    = input.session("2000-0000", "", inline="ASIA",  group=g_sess)
+i_asia_sess    = input.session("0800-1200", "", inline="ASIA",  group=g_sess)
 i_asia_color   = input.color(color.blue,   "", inline="ASIA",   group=g_sess)
 
 i_use_london   = input.bool(true,  "", inline="LONDON", group=g_sess)
 i_london_txt   = input.string("London",    "", inline="LONDON", group=g_sess)
-i_london_sess  = input.session("0200-0500", "", inline="LONDON", group=g_sess)
+i_london_sess  = input.session("1400-1700", "", inline="LONDON", group=g_sess)
 i_london_color = input.color(color.red,    "", inline="LONDON", group=g_sess)
 
 i_use_nyam     = input.bool(true,  "", inline="NYAM",   group=g_sess)
 i_nyam_txt     = input.string("NY AM",     "", inline="NYAM",   group=g_sess)
-i_nyam_sess    = input.session("0930-1100", "", inline="NYAM",  group=g_sess)
+i_nyam_sess    = input.session("2130-2300", "", inline="NYAM",  group=g_sess)
 i_nyam_color   = input.color(#089981,      "", inline="NYAM",   group=g_sess)
 
 i_use_nylu     = input.bool(false, "", inline="NYLU",   group=g_sess)
 i_nylu_txt     = input.string("NY Lunch",  "", inline="NYLU",   group=g_sess)
-i_nylu_sess    = input.session("1200-1300", "", inline="NYLU",  group=g_sess)
+i_nylu_sess    = input.session("0000-0100", "", inline="NYLU",  group=g_sess)
 i_nylu_color   = input.color(color.yellow, "", inline="NYLU",   group=g_sess)
 
 i_use_nypm     = input.bool(false, "", inline="NYPM",   group=g_sess)
 i_nypm_txt     = input.string("NY PM",     "", inline="NYPM",   group=g_sess)
-i_nypm_sess    = input.session("1330-1600", "", inline="NYPM",  group=g_sess)
+i_nypm_sess    = input.session("0130-0400", "", inline="NYPM",  group=g_sess)
 i_nypm_color   = input.color(color.purple, "", inline="NYPM",   group=g_sess)
 
 i_box_trans    = input.int(70, "Box Transparency",  minval=0, maxval=100, group=g_sess)
