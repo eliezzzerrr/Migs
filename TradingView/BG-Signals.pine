@@ -89,6 +89,8 @@ i_move_be   = input.bool(false, "Move SL → BE after TP1",         group=g_sim,
      tooltip="When TP1 fills, move SL to entry price.")
 i_move_tp1  = input.bool(false, "Move SL → TP1 after TP2",        group=g_sim,
      tooltip="When TP2 fills, trail SL up to TP1 price (locks +1R). Requires TP2 enabled. Has no effect if TP2 is the final target.")
+i_move_be2  = input.bool(false, "Move SL → BE after TP2",         group=g_sim,
+     tooltip="When TP2 fills, move SL to entry price (break-even). Useful when you want TP2 to lock in BE instead of +1R — more room than the TP1 trail. Precedence: 'Move SL → TP1 after TP2' wins if both are checked (TP1 trail is the higher lock).")
 i_move_tp2  = input.bool(false, "Move SL → TP2 after TP3",        group=g_sim,
      tooltip="When TP3 fills, trail SL up to TP2 price (locks +2R) instead of closing — lets the trade ride past TP3 until SL is hit. Requires TP3 enabled.")
 i_cooldown  = input.int(6,  "Cooldown bars after sim close",      minval=0, group=g_sim,
@@ -758,9 +760,15 @@ compute_sig_state() =>
                     sim_close_bar := bar_index
                     closed_now    := true
                 else if i_move_tp1
+                    // Trail to TP1 (locks +1R) — wins precedence over BE
                     t.eff_sl   := t.tp1
                     t.eff_sl_r := 1.0
                     evt_trail_step := 2
+                else if i_move_be2
+                    // Trail to BE (0R) — only fires when TP1 trail is off
+                    t.eff_sl   := t.entry
+                    t.eff_sl_r := 0.0
+                    evt_trail_step := 1
             // TP3
             if not closed_now and i_use_tp3 and not t.tp3_done and (t.is_long ? high >= t.tp3 : low <= t.tp3)
                 t.tp3_done := true
