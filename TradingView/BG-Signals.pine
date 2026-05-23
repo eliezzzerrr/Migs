@@ -94,14 +94,45 @@ i_move_tp2  = input.bool(false, "Move SL → TP2 after TP3",        group=g_sim,
 i_cooldown  = input.int(6,  "Cooldown bars after sim close",      minval=0, group=g_sim,
      tooltip="Bars to wait after the LAST sim trade fully closes before opening a new one. Only applies when no trades are active. Suggested by TF: 1m=30, 5m=6, 15m=4, 30m=3, 1H=2.")
 
-g_sess         = "Session Filter"
+g_sess         = "Killzones / Session Filter"
 i_use_sessions = input.bool(false, "Limit simulation to selected sessions", group=g_sess,
-     tooltip="When ON, the sim only OPENS new trades during ticked sessions. Existing trades resolve naturally. Times are in UTC; PHT equivalents shown in label. Tick the LDN/NY overlap alone to trade only the highest-volatility window.")
-i_sess_asia    = input.bool(false, "Asia (09:00–18:00 Tokyo · DST-aware)",       group=g_sess)
-i_sess_london  = input.bool(true,  "London (08:00–17:00 London · DST-aware)",    group=g_sess)
-i_sess_ny      = input.bool(true,  "New York (08:00–17:00 NY · DST-aware)",      group=g_sess)
-i_sess_overlap = input.bool(true,  "LDN/NY overlap (London + NY both open)",     group=g_sess,
-     tooltip="The high-volatility window where London and New York both run. Computed as London∩NY, so it auto-adjusts to DST (≈4 hours, shifts between summer/winter). Already implicit when both London and NY are ticked; tick this ALONE to trade only the overlap.")
+     tooltip="When ON, the sim only OPENS new trades during ticked killzones. Existing trades resolve naturally. Untick all killzones (or untick this master) to allow all hours.")
+i_show_kz      = input.bool(true,  "Show Killzone Boxes", inline="KZ_SHOW", group=g_sess)
+i_show_kz_txt  = input.bool(true,  "Display Text",        inline="KZ_SHOW", group=g_sess)
+i_kz_tz        = input.string("America/New_York", "Timezone",
+     options=['America/New_York','GMT-12','GMT-11','GMT-10','GMT-9','GMT-8','GMT-7','GMT-6','GMT-5','GMT-4','GMT-3','GMT-2','GMT-1','GMT+0','GMT+1','GMT+2','GMT+3','GMT+4','GMT+5','GMT+6','GMT+7','GMT+8','GMT+9','GMT+10','GMT+11','GMT+12','GMT+13','GMT+14'],
+     group=g_sess,
+     tooltip="All killzone times below are interpreted in this timezone. America/New_York follows DST. GMT offsets are fixed and don't track DST.")
+
+i_use_asia     = input.bool(true,  "", inline="ASIA",   group=g_sess)
+i_asia_txt     = input.string("Asia",      "", inline="ASIA",   group=g_sess)
+i_asia_sess    = input.session("2000-0000", "", inline="ASIA",  group=g_sess)
+i_asia_color   = input.color(color.blue,   "", inline="ASIA",   group=g_sess)
+
+i_use_london   = input.bool(true,  "", inline="LONDON", group=g_sess)
+i_london_txt   = input.string("London",    "", inline="LONDON", group=g_sess)
+i_london_sess  = input.session("0200-0500", "", inline="LONDON", group=g_sess)
+i_london_color = input.color(color.red,    "", inline="LONDON", group=g_sess)
+
+i_use_nyam     = input.bool(true,  "", inline="NYAM",   group=g_sess)
+i_nyam_txt     = input.string("NY AM",     "", inline="NYAM",   group=g_sess)
+i_nyam_sess    = input.session("0930-1100", "", inline="NYAM",  group=g_sess)
+i_nyam_color   = input.color(#089981,      "", inline="NYAM",   group=g_sess)
+
+i_use_nylu     = input.bool(false, "", inline="NYLU",   group=g_sess)
+i_nylu_txt     = input.string("NY Lunch",  "", inline="NYLU",   group=g_sess)
+i_nylu_sess    = input.session("1200-1300", "", inline="NYLU",  group=g_sess)
+i_nylu_color   = input.color(color.yellow, "", inline="NYLU",   group=g_sess)
+
+i_use_nypm     = input.bool(false, "", inline="NYPM",   group=g_sess)
+i_nypm_txt     = input.string("NY PM",     "", inline="NYPM",   group=g_sess)
+i_nypm_sess    = input.session("1330-1600", "", inline="NYPM",  group=g_sess)
+i_nypm_color   = input.color(color.purple, "", inline="NYPM",   group=g_sess)
+
+i_box_trans    = input.int(70, "Box Transparency",  minval=0, maxval=100, group=g_sess)
+i_text_trans   = input.int(50, "Text Transparency", minval=0, maxval=100, group=g_sess)
+i_kz_max_days  = input.int(3,  "Killzone history (sessions kept)", minval=1, group=g_sess,
+     tooltip="How many of the most recent killzone boxes to keep on the chart, per session. Older boxes are auto-pruned.")
 
 g_dates        = "Backtest Date Range"
 i_use_curweek  = input.bool(false, "Use current week (Mon 00:00 → next Mon 00:00 PHT)", group=g_dates,
@@ -314,6 +345,61 @@ get_suggestions(string tf) =>
     s
 
 // =====================================================================
+// KILLZONE UDT + helpers — per-session visual boxes on the chart. Each
+// enabled killzone holds an array of boxes (one per past session, up to
+// i_kz_max_days). The active session's box extends right and updates
+// top/bottom to match the high/low seen since session start. The
+// was_in_sess field tracks the previous bar's session membership so
+// transitions (new session start) are detected without history refs.
+// =====================================================================
+type KZ
+    string title       = ""
+    color  base_color  = color.gray
+    string session_str = ""
+    array<box> boxes   = na
+    bool   was_in_sess = false
+
+initKZ() =>
+    array<KZ> res = array.new<KZ>()
+    if i_use_asia
+        res.push(KZ.new(i_asia_txt,   i_asia_color,   i_asia_sess,   array.new<box>(), false))
+    if i_use_london
+        res.push(KZ.new(i_london_txt, i_london_color, i_london_sess, array.new<box>(), false))
+    if i_use_nyam
+        res.push(KZ.new(i_nyam_txt,   i_nyam_color,   i_nyam_sess,   array.new<box>(), false))
+    if i_use_nylu
+        res.push(KZ.new(i_nylu_txt,   i_nylu_color,   i_nylu_sess,   array.new<box>(), false))
+    if i_use_nypm
+        res.push(KZ.new(i_nypm_txt,   i_nypm_color,   i_nypm_sess,   array.new<box>(), false))
+    res
+
+var array<KZ> killzones = initKZ()
+
+method update_kz(KZ this) =>
+    in_sess = not na(time(timeframe.period, this.session_str, i_kz_tz))
+    if in_sess and not this.was_in_sess
+        box_c  = color.new(this.base_color, i_box_trans)
+        text_c = color.new(this.base_color, i_text_trans)
+        new_box = box.new(time, high, time, low,
+                          xloc         = xloc.bar_time,
+                          border_color = i_show_kz ? box_c : na,
+                          bgcolor      = i_show_kz ? box_c : na,
+                          text         = i_show_kz and i_show_kz_txt ? this.title : "",
+                          text_color   = text_c,
+                          text_halign  = text.align_center,
+                          text_valign  = text.align_center,
+                          text_size    = size.large)
+        array.unshift(this.boxes, new_box)
+        if array.size(this.boxes) > i_kz_max_days
+            box.delete(array.pop(this.boxes))
+    if in_sess and array.size(this.boxes) > 0
+        b = array.get(this.boxes, 0)
+        box.set_right(b, time)
+        box.set_top(b,    math.max(box.get_top(b),    high))
+        box.set_bottom(b, math.min(box.get_bottom(b), low))
+    this.was_in_sess := in_sess
+
+// =====================================================================
 // HELPER — ADX wrapper (ta.adx doesn't exist in v6; use ta.dmi tuple)
 // =====================================================================
 calc_adx(int _period) =>
@@ -514,24 +600,27 @@ compute_sig_state() =>
       inside_custom
     in_date_range = not filter_active or inside_range
 
-    // -- Session filter (exchange-local windows; DST auto-handled by Pine's
-    //    timezone-aware time() — UTC offsets shift with summer/winter time
-    //    so a static UTC string would only match one half of the year). --
-    in_asia    = not na(time(timeframe.period, "0900-1800", "Asia/Tokyo"))
-    in_london  = not na(time(timeframe.period, "0800-1700", "Europe/London"))
-    in_ny      = not na(time(timeframe.period, "0800-1700", "America/New_York"))
-    in_overlap = in_london and in_ny
+    // -- Session filter (5 killzones, all in the user-selected timezone). --
+    in_kz_asia   = not na(time(timeframe.period, i_asia_sess,   i_kz_tz))
+    in_kz_london = not na(time(timeframe.period, i_london_sess, i_kz_tz))
+    in_kz_nyam   = not na(time(timeframe.period, i_nyam_sess,   i_kz_tz))
+    in_kz_nylu   = not na(time(timeframe.period, i_nylu_sess,   i_kz_tz))
+    in_kz_nypm   = not na(time(timeframe.period, i_nypm_sess,   i_kz_tz))
 
     in_session = not i_use_sessions or
-      (i_sess_asia    and in_asia)    or
-      (i_sess_london  and in_london)  or
-      (i_sess_ny      and in_ny)      or
-      (i_sess_overlap and in_overlap)
+      (i_use_asia   and in_kz_asia)   or
+      (i_use_london and in_kz_london) or
+      (i_use_nyam   and in_kz_nyam)   or
+      (i_use_nylu   and in_kz_nylu)   or
+      (i_use_nypm   and in_kz_nypm)
 
-    session_now = in_overlap ? "LDN/NY" :
-      in_ny      ? "NY"     :
-      in_london  ? "London" :
-      in_asia    ? "Asia"   : "off"
+    // Active session display label (priority: NY AM > London > NY Lunch >
+    // NY PM > Asia — chosen so the most "tradeable" session wins overlap)
+    session_now = in_kz_nyam   ? i_nyam_txt   :
+      in_kz_london ? i_london_txt :
+      in_kz_nylu   ? i_nylu_txt   :
+      in_kz_nypm   ? i_nypm_txt   :
+      in_kz_asia   ? i_asia_txt   : "off"
 
     // -- Per-bar event flags (local; not var — reset each bar) --
     evt_open_long      = false
@@ -1036,6 +1125,15 @@ plotshape(closed_by_sl_short, "SL Short",  shape.circle, location.abovebar,
 // plot()-based series here. line.new doesn't connect between trades, so
 // the multi-position stair-step is gone, and historical trades' levels
 // stay visible as frozen line segments from entry to close.
+
+// =====================================================================
+// KILLZONE RENDERING — runs each chart bar, updates each enabled
+// killzone's box for the current session. The update_kz method handles
+// both new-session detection (creates a new box) and active-session
+// extension (stretches box right + adjusts top/bottom to high/low).
+// =====================================================================
+for [_, kz] in killzones
+    update_kz(kz)
 
 // =====================================================================
 // STATUS TABLE
