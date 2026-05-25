@@ -59,7 +59,7 @@ i_min_sl_flt = input.float(0.0, "Min SL filter ($) — reject",     minval=0.0, 
      tooltip="FILTER: reject the trade entirely if the OB-derived SL distance is below this threshold (BEFORE the clamp is applied). 0 = disabled. Use this to skip setups whose natural OB is so small the trade would be all-spread. Different from the clamp above: filter SKIPS, clamp WIDENS. Suggested for XAUUSD by TF: 1m=$3, 5m=$5, 15m=$7, 30m=$10, 1H=$15.")
 
 g_htf       = "HTF Bias"
-i_req_h1    = input.bool(true,  "Require 1H bias agreement",     group=g_htf)
+i_req_h1    = input.bool(true,  "Require HTF Bias Agreement",    group=g_htf)
 i_h1_tf     = input.timeframe("60", "HTF timeframe",             group=g_htf)
 i_h1_fast   = input.int(12, "HTF fast EMA",                       minval=1, group=g_htf)
 i_h1_slow   = input.int(80, "HTF slow EMA",                       minval=1, group=g_htf)
@@ -128,12 +128,20 @@ i_use_curweek  = input.bool(false, "Use current week (Mon 00:00 → next Mon 00:
      tooltip="Tick to filter the sim to bars in the current ISO week (Asia/Manila). Self-activating — no need to tick anything else. Recomputed live, rolls every Monday midnight. Highest priority — overrides Month and custom.")
 i_use_curmonth = input.bool(true,  "Use current month (1st 00:00 → next 1st 00:00 PHT)", group=g_dates,
      tooltip="Tick to filter the sim to bars in the current calendar month (Asia/Manila). Self-activating. Recomputed live, rolls every 1st of the month. Overridden by 'Use current week' if that's also on.")
+i_use_last7    = input.bool(false, "Last 7 days",  group=g_dates,
+     tooltip="Rolling 7-day window ending now. Priority order across all filters: Week > Month > Last 7 > Last 14 > Last 30 > Last 60 > Custom. Shorter window wins when multiple are ticked.")
+i_use_last14   = input.bool(false, "Last 14 days", group=g_dates,
+     tooltip="Rolling 14-day window ending now.")
+i_use_last30   = input.bool(false, "Last 30 days", group=g_dates,
+     tooltip="Rolling 30-day window ending now.")
+i_use_last60   = input.bool(false, "Last 60 days", group=g_dates,
+     tooltip="Rolling 60-day window ending now.")
 i_use_dates    = input.bool(false, "Use custom Start/End range", group=g_dates,
-     tooltip="Tick to activate the custom Start/End below. Ignored when Week or Month is on. Untick all three to disable date filtering entirely.")
+     tooltip="Tick to activate the custom Start/End below. Ignored when Week, Month, or any Last-N-Days filter is on. Untick all to disable date filtering entirely.")
 i_date_from    = input.time(timestamp("2025-01-01 00:00 +0000"), "Start (custom)", group=g_dates,
-     tooltip="Effective only when 'Use custom Start/End range' is ON and Week+Month are OFF.")
+     tooltip="Effective only when 'Use custom Start/End range' is ON and all higher-priority filters (Week, Month, Last 7/14/30/60) are OFF.")
 i_date_to      = input.time(timestamp("2031-01-01 00:00 +0000"), "End (custom)",   group=g_dates,
-     tooltip="Effective only when 'Use custom Start/End range' is ON and Week+Month are OFF. Inclusive — bars at this exact timestamp qualify.")
+     tooltip="Effective only when 'Use custom Start/End range' is ON and all higher-priority filters (Week, Month, Last 7/14/30/60) are OFF. Inclusive — bars at this exact timestamp qualify.")
 
 g_disp      = "Display"
 i_show_tbl  = input.bool(true,  "Show status table",              group=g_disp)
@@ -518,13 +526,30 @@ compute_sig_state() =>
     curweek_start = today_start   - days_to_mon * 86400000
     curweek_end   = curweek_start + 7           * 86400000
 
-    inside_curweek  = time >= curweek_start and time <  curweek_end
+    // Rolling "last N days" windows, anchored at current real-time.
+    last7_start  = timenow - 7  * 86400000
+    last14_start = timenow - 14 * 86400000
+    last30_start = timenow - 30 * 86400000
+    last60_start = timenow - 60 * 86400000
+
+    inside_curweek  = time >= curweek_start  and time <  curweek_end
     inside_curmonth = time >= curmonth_start and time <  curmonth_end
+    inside_last7    = time >= last7_start
+    inside_last14   = time >= last14_start
+    inside_last30   = time >= last30_start
+    inside_last60   = time >= last60_start
     inside_custom   = time >= i_date_from    and time <= i_date_to
 
-    filter_active = i_use_curweek or i_use_curmonth or i_use_dates
-    inside_range  = i_use_curweek  ? inside_curweek  :
+    filter_active = i_use_curweek or i_use_curmonth or
+      i_use_last7 or i_use_last14 or i_use_last30 or i_use_last60 or
+      i_use_dates
+    // Priority: shorter window wins when multiple are ticked.
+    inside_range = i_use_curweek  ? inside_curweek  :
       i_use_curmonth ? inside_curmonth :
+      i_use_last7    ? inside_last7    :
+      i_use_last14   ? inside_last14   :
+      i_use_last30   ? inside_last30   :
+      i_use_last60   ? inside_last60   :
       inside_custom
     in_date_range = not filter_active or inside_range
 
