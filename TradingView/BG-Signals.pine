@@ -64,17 +64,6 @@ i_h1_tf     = input.timeframe("60", "HTF timeframe",             group=g_htf)
 i_h1_fast   = input.int(12, "HTF fast EMA",                       minval=1, group=g_htf)
 i_h1_slow   = input.int(80, "HTF slow EMA",                       minval=1, group=g_htf)
 
-g_chop      = "Chop / Consolidation Filter"
-i_chop_on   = input.bool(false, "Enable chop filter",             group=g_chop)
-i_strict_h1 = input.bool(false, "Strict H1: reject ranging bias", group=g_chop)
-i_adx_min   = input.float(20.0, "ADX minimum (0 = disable)",      minval=0.0, step=0.5, group=g_chop)
-i_adx_per   = input.int(14, "ADX period",                          minval=1, group=g_chop)
-i_adx_tf    = input.timeframe("15", "ADX timeframe",              group=g_chop)
-i_bos_conf  = input.int(40, "Whipsaw lookback bars (0 = off)",     minval=0, group=g_chop)
-i_atr_exp   = input.float(0.80, "ATR expansion ratio (0 = off)",  minval=0.0, step=0.05, group=g_chop)
-i_atr_ma    = input.int(50, "ATR MA period",                       minval=2, group=g_chop,
-     tooltip="Lookback for the volatility baseline. Suggested: 50 across all TFs (≈4hr on 5m, ≈80min on 1m).")
-
 g_sim       = "Simulated Trades"
 i_sim_on    = input.bool(true,  "Track simulated trades",         group=g_sim)
 i_max_pos   = input.int(1, "Max simultaneous trades",             minval=1, maxval=10, group=g_sim,
@@ -230,9 +219,6 @@ type SigState
     bool   h1_bull       = false
     bool   h1_bear       = false
     string h1_bias_s     = "ranging"
-    float  adx_val       = 0.0
-    float  atr_ratio     = 1.0
-    string chop_reason   = ""
     string session_now   = "off"
     // Gating flags
     bool   in_date_range = true
@@ -272,15 +258,6 @@ type Suggestions
     string htf_tf       = "60"
     int    h1_fast      = 12
     int    h1_slow      = 80
-    // Chop / Consolidation
-    bool   chop_on      = false
-    bool   strict_h1    = false
-    float  adx_min      = 20.0
-    int    adx_per      = 14
-    string adx_tf       = "15"
-    int    bos_conf     = 40
-    float  atr_exp      = 0.8
-    int    atr_ma       = 50
     // Simulated Trades
     int    cooldown     = 6
     int    max_pos      = 2
@@ -298,8 +275,6 @@ get_suggestions(string tf) =>
         s.min_sl     := 5.0
         s.min_sl_flt := 3.0
         s.htf_tf     := "15"
-        s.adx_tf     := "5"
-        s.bos_conf   := 200
         s.cooldown   := 30
         s.max_pos    := 3
     else if tf == "15"
@@ -310,10 +285,6 @@ get_suggestions(string tf) =>
         s.min_sl     := 10.0
         s.min_sl_flt := 7.0
         s.htf_tf     := "240"
-        s.adx_tf     := "30"
-        s.bos_conf   := 30
-        s.chop_on    := true
-        s.strict_h1  := true
         s.cooldown   := 4
         s.max_pos    := 2
     else if tf == "30"
@@ -324,10 +295,6 @@ get_suggestions(string tf) =>
         s.min_sl     := 15.0
         s.min_sl_flt := 10.0
         s.htf_tf     := "240"
-        s.adx_tf     := "60"
-        s.bos_conf   := 20
-        s.chop_on    := true
-        s.strict_h1  := true
         s.cooldown   := 3
         s.max_pos    := 1
     else if tf == "60"
@@ -338,10 +305,6 @@ get_suggestions(string tf) =>
         s.min_sl     := 25.0
         s.min_sl_flt := 15.0
         s.htf_tf     := "D"
-        s.adx_tf     := "240"
-        s.bos_conf   := 10
-        s.chop_on    := true
-        s.strict_h1  := true
         s.cooldown   := 2
         s.max_pos    := 1
     s
@@ -402,23 +365,14 @@ method update_kz(KZ this) =>
     this.was_in_sess := in_sess
 
 // =====================================================================
-// HELPER — ADX wrapper (ta.adx doesn't exist in v6; use ta.dmi tuple)
-// =====================================================================
-calc_adx(int _period) =>
-    [_pdi, _mdi, _adx] = ta.dmi(_period, _period)
-    _adx
-
-// =====================================================================
 // compute_sig_state() — full signal + sim pipeline. See header for the
 // signal-TF lift rationale. Multi-position update: trades are stored in
 // a var array<Trade> inside this function; entry pushes a new Trade,
 // TP/SL processing iterates the array (newest-first for safe removal).
 // =====================================================================
 compute_sig_state() =>
-    // -- Volatility --
-    atr_val    = ta.atr(i_atr_per)
-    atr_ma_val = ta.sma(atr_val, i_atr_ma)
-    atr_ratio  = atr_ma_val > 0 ? atr_val / atr_ma_val : 1.0
+    // -- Volatility (ATR is still needed for SL buffer + entry proximity) --
+    atr_val = ta.atr(i_atr_per)
 
     // -- 1H bias (nested HTF request from sig-TF context) --
     h1_close = request.security(syminfo.tickerid, i_h1_tf, close, barmerge.gaps_off, barmerge.lookahead_off)
@@ -427,9 +381,6 @@ compute_sig_state() =>
     h1_bull  = h1_fast > h1_slow and h1_close > h1_fast
     h1_bear  = h1_fast < h1_slow and h1_close < h1_fast
     h1_bias_s = h1_bull ? "bullish" : h1_bear ? "bearish" : "ranging"
-
-    // -- ADX --
-    adx_val = request.security(syminfo.tickerid, i_adx_tf, calc_adx(i_adx_per), barmerge.gaps_off, barmerge.lookahead_off)
 
     // -- Swings / BOS / OB --
     ph = ta.pivothigh(i_swing_len, i_swing_len)
@@ -501,31 +452,6 @@ compute_sig_state() =>
                 ob_demand := false
                 break
 
-    // -- Chop filter --
-    whipsaw_for_bull = i_bos_conf > 0 and not na(last_bear_bos_b) and (bar_index - last_bear_bos_b) < i_bos_conf
-    whipsaw_for_bear = i_bos_conf > 0 and not na(last_bull_bos_b) and (bar_index - last_bull_bos_b) < i_bos_conf
-
-    chop_reason_bull = ""
-    chop_reason_bear = ""
-
-    if i_chop_on
-        if i_strict_h1 and not h1_bull and not h1_bear
-            chop_reason_bull := "1H bias ranging"
-            chop_reason_bear := "1H bias ranging"
-        else
-            if i_adx_min > 0 and adx_val < i_adx_min
-                adx_msg = "ADX " + str.tostring(adx_val, "0.0") + " < " + str.tostring(i_adx_min, "0.0")
-                chop_reason_bull := adx_msg
-                chop_reason_bear := adx_msg
-            if chop_reason_bull == "" and i_atr_exp > 0 and atr_ratio < i_atr_exp
-                atr_msg = "ATR squeeze " + str.tostring(atr_ratio, "0.00") + " < " + str.tostring(i_atr_exp, "0.00")
-                chop_reason_bull := atr_msg
-                chop_reason_bear := atr_msg
-            if chop_reason_bull == "" and whipsaw_for_bull
-                chop_reason_bull := "whipsaw: bear BOS in " + str.tostring(i_bos_conf) + " bars"
-            if chop_reason_bear == "" and whipsaw_for_bear
-                chop_reason_bear := "whipsaw: bull BOS in " + str.tostring(i_bos_conf) + " bars"
-
     // -- Setup detection --
     have_ob_bull = active_bull_bos and not na(ob_high) and ob_demand
     have_ob_bear = active_bear_bos and not na(ob_low)  and not ob_demand
@@ -536,14 +462,16 @@ compute_sig_state() =>
     near_bull = have_ob_bull and not na(dist_bull) and dist_bull <= i_entry_atr * atr_val
     near_bear = have_ob_bear and not na(dist_bear) and dist_bear <= i_entry_atr * atr_val
 
-    h1_ok_bull = not i_req_h1 or h1_bull or (not h1_bear and not i_strict_h1)
-    h1_ok_bear = not i_req_h1 or h1_bear or (not h1_bull and not i_strict_h1)
+    // HTF agreement: when required, the bias must match the trade
+    // direction OR be neutral (not actively opposed).
+    h1_ok_bull = not i_req_h1 or h1_bull or not h1_bear
+    h1_ok_bear = not i_req_h1 or h1_bear or not h1_bull
 
-    bull_setup = have_ob_bull and near_bull and h1_ok_bull and chop_reason_bull == ""
-    bear_setup = have_ob_bear and near_bear and h1_ok_bear and chop_reason_bear == ""
+    bull_setup = have_ob_bull and near_bull and h1_ok_bull
+    bear_setup = have_ob_bear and near_bear and h1_ok_bear
 
-    bull_forming = have_ob_bull and h1_ok_bull and chop_reason_bull == "" and not near_bull
-    bear_forming = have_ob_bear and h1_ok_bear and chop_reason_bear == "" and not near_bear
+    bull_forming = have_ob_bull and h1_ok_bull and not near_bull
+    bear_forming = have_ob_bear and h1_ok_bear and not near_bear
 
     // -- Sim state: array of active trades + aggregate counters --
     var array<Trade> active_trades = array.new<Trade>(0)
@@ -851,10 +779,6 @@ compute_sig_state() =>
     bool   d_tp2_done  = not na(disp) and disp.tp2_done
     bool   d_tp3_done  = not na(disp) and disp.tp3_done
 
-    // -- Collapse chop reasons for display --
-    chop_reason_out = chop_reason_bull != "" ? chop_reason_bull :
-      chop_reason_bear != "" ? chop_reason_bear : ""
-
     // -- Build return UDT --
     SigState s = SigState.new()
     s.bull_setup       := bull_setup
@@ -884,9 +808,6 @@ compute_sig_state() =>
     s.h1_bull          := h1_bull
     s.h1_bear          := h1_bear
     s.h1_bias_s        := h1_bias_s
-    s.adx_val          := adx_val
-    s.atr_ratio        := atr_ratio
-    s.chop_reason      := chop_reason_out
     s.session_now      := session_now
     s.in_date_range    := in_date_range
     s.in_session       := in_session
@@ -944,9 +865,6 @@ day_count_now    = day_wins_now + day_losses_now
 h1_bull          = st.h1_bull
 h1_bear          = st.h1_bear
 h1_bias_s        = st.h1_bias_s
-adx_val          = st.adx_val
-atr_ratio        = st.atr_ratio
-chop_reason_disp = st.chop_reason
 session_now      = st.session_now
 in_date_range    = st.in_date_range
 in_session       = st.in_session
@@ -1167,7 +1085,7 @@ pos_lookup(string s) =>
         "bottom_left"  => position.bottom_left
         => position.bottom_right
 
-var table tbl = table.new(pos_lookup(i_tbl_pos), 2, 19,
+var table tbl = table.new(pos_lookup(i_tbl_pos), 2, 16,
                           bgcolor      = color.new(color.black, 20),
                           border_color = color.new(color.gray, 50),
                           border_width = 1,
@@ -1181,7 +1099,7 @@ sig_diff       = i_sig_tf != "" and i_sig_tf != timeframe.period
 title_col1_txt = sig_diff ? "sig " + i_sig_tf : "v6"
 
 if i_show_tbl and barstate.islast
-    table.clear(tbl, 0, 0, 1, 18)
+    table.clear(tbl, 0, 0, 1, 15)
 
     f_cell(0, 0, "BG SIGNALS",     color.new(#ffd54f, 0))
     f_cell(0, 1, title_col1_txt,   color.new(#ffd54f, 0))
@@ -1215,47 +1133,35 @@ if i_show_tbl and barstate.islast
     f_cell(3, 0, "1H Bias",   color.white)
     f_cell(3, 1, h1_bias_s,   h1_bull ? color.lime : h1_bear ? color.red : color.silver)
 
-    adx_clr = i_adx_min > 0 and adx_val < i_adx_min ? color.red : color.lime
-    f_cell(4, 0, "ADX(" + i_adx_tf + ")", color.white)
-    f_cell(4, 1, str.tostring(adx_val, "0.0"), adx_clr)
-
-    atr_clr = i_atr_exp > 0 and atr_ratio < i_atr_exp ? color.red : color.lime
-    f_cell(5, 0, "ATR ratio", color.white)
-    f_cell(5, 1, str.tostring(atr_ratio, "0.00"), atr_clr)
-
-    chop_now = chop_reason_disp != "" ? chop_reason_disp : "OK"
-    f_cell(6, 0, "Chop",      color.white)
-    f_cell(6, 1, chop_now,    chop_now == "OK" ? color.lime : color.orange)
-
-    f_cell(7, 0, "Slots",     color.white)
-    f_cell(7, 1, str.tostring(active_count) + " / " + str.tostring(i_max_pos),
+    f_cell(4, 0, "Slots",     color.white)
+    f_cell(4, 1, str.tostring(active_count) + " / " + str.tostring(i_max_pos),
                   active_count >= i_max_pos ? color.orange : color.silver)
 
-    f_cell(8, 0, "Sim trades", color.white)
-    f_cell(8, 1, str.tostring(sim_count) + "  W:" + str.tostring(sim_wins) +
+    f_cell(5, 0, "Trades", color.white)
+    f_cell(5, 1, str.tostring(sim_count) + "  W:" + str.tostring(sim_wins) +
                   " L:" + str.tostring(sim_losses), color.white)
 
     wr = sim_wins + sim_losses > 0 ? sim_wins * 100.0 / (sim_wins + sim_losses) : 0.0
-    f_cell(9, 0, "Sim WR",    color.white)
-    f_cell(9, 1, str.tostring(wr, "0.0") + "%",
+    f_cell(6, 0, "Win Rate",    color.white)
+    f_cell(6, 1, str.tostring(wr, "0.0") + "%",
                   wr >= 40 ? color.lime : color.red)
 
-    f_cell(10, 0, "Sim total R", color.white)
-    f_cell(10, 1, str.tostring(sim_total_r, "+0.00") + "R",
-                   sim_total_r >= 0 ? color.lime : color.red)
+    f_cell(7, 0, "Total Return", color.white)
+    f_cell(7, 1, str.tostring(sim_total_r, "+0.00") + "R",
+                  sim_total_r >= 0 ? color.lime : color.red)
 
-    f_cell(11, 0, "Day R (PHT)", color.white)
-    f_cell(11, 1, str.tostring(day_r_now, "+0.00") + "R",
-                   day_r_now >= 0 ? color.lime : color.red)
+    f_cell(8, 0, "Day R (PHT)", color.white)
+    f_cell(8, 1, str.tostring(day_r_now, "+0.00") + "R",
+                  day_r_now >= 0 ? color.lime : color.red)
 
-    f_cell(12, 0, "Day trades", color.white)
-    f_cell(12, 1, str.tostring(day_count_now) + "  W:" + str.tostring(day_wins_now) +
-                   " L:" + str.tostring(day_losses_now),
-                   day_count_now > 0 ? color.white : color.gray)
+    f_cell(9, 0, "Day trades", color.white)
+    f_cell(9, 1, str.tostring(day_count_now) + "  W:" + str.tostring(day_wins_now) +
+                  " L:" + str.tostring(day_losses_now),
+                  day_count_now > 0 ? color.white : color.gray)
 
     day_wr = day_count_now > 0 ? day_wins_now * 100.0 / day_count_now : 0.0
-    f_cell(13, 0, "Day WR",    color.white)
-    f_cell(13, 1, day_count_now > 0 ? str.tostring(day_wr, "0.0") + "%" : "—",
+    f_cell(10, 0, "Day WR",    color.white)
+    f_cell(10, 1, day_count_now > 0 ? str.tostring(day_wr, "0.0") + "%" : "—",
                    day_count_now == 0 ? color.gray :
                    day_wr >= 40       ? color.lime : color.red)
 
@@ -1263,17 +1169,17 @@ if i_show_tbl and barstate.islast
         sl_tag = sim_eff_sl_r >= 2.0 ? " (TP2)" :
           sim_eff_sl_r >= 1.0 ? " (TP1)" :
           sim_eff_sl_r >= 0.0 ? " (BE)"  : ""
-        f_cell(14, 0, "Dir (latest)", color.white)
-        f_cell(14, 1, sim_long ? "BUY" : "SELL", sim_long ? color.lime : color.red)
-        f_cell(15, 0, "Entry",   color.white)
-        f_cell(15, 1, str.tostring(sim_entry, format.mintick), color.white)
-        f_cell(16, 0, "SL" + sl_tag, color.white)
-        f_cell(16, 1, str.tostring(sim_eff_sl, format.mintick),
+        f_cell(11, 0, "Dir (latest)", color.white)
+        f_cell(11, 1, sim_long ? "BUY" : "SELL", sim_long ? color.lime : color.red)
+        f_cell(12, 0, "Entry",   color.white)
+        f_cell(12, 1, str.tostring(sim_entry, format.mintick), color.white)
+        f_cell(13, 0, "SL" + sl_tag, color.white)
+        f_cell(13, 1, str.tostring(sim_eff_sl, format.mintick),
                        sim_eff_sl_r >= 0 ? i_col_be : color.red)
-        f_cell(17, 0, "TP1" + (sim_tp1_done ? " ✓" : ""), color.white)
-        f_cell(17, 1, str.tostring(sim_tp1, format.mintick), sim_tp1_done ? color.gray : color.lime)
-        f_cell(18, 0, final_tp_lbl + " (final)", color.white)
-        f_cell(18, 1, str.tostring(final_tp_price, format.mintick), color.lime)
+        f_cell(14, 0, "TP1" + (sim_tp1_done ? " ✓" : ""), color.white)
+        f_cell(14, 1, str.tostring(sim_tp1, format.mintick), sim_tp1_done ? color.gray : color.lime)
+        f_cell(15, 0, final_tp_lbl + " (final)", color.white)
+        f_cell(15, 1, str.tostring(final_tp_price, format.mintick), color.lime)
 
 // =====================================================================
 // TUNING SUGGESTIONS PANEL
@@ -1282,7 +1188,7 @@ if i_show_tbl and barstate.islast
 // current value (orange when they differ, gray ✓ when they match).
 // Updates whenever the Signal TF input changes.
 // =====================================================================
-var table sug_tbl = table.new(pos_lookup(i_sug_pos), 3, 22,
+var table sug_tbl = table.new(pos_lookup(i_sug_pos), 3, 14,
                               bgcolor      = color.new(color.black, 20),
                               border_color = color.new(color.gray, 50),
                               border_width = 1,
@@ -1305,7 +1211,7 @@ f_sug_row(int _r, string _name, string _sug_v, string _cur_v, bool _match) =>
 float_eq(float _a, float _b) => math.abs(_a - _b) < 0.005
 
 if i_show_sug and barstate.islast
-    table.clear(sug_tbl, 0, 0, 2, 21)
+    table.clear(sug_tbl, 0, 0, 2, 13)
     Suggestions sug = get_suggestions(sig_tf)
 
     sug_tf_label = "SUGGESTED · " + sig_tf + " sig"
@@ -1335,27 +1241,10 @@ if i_show_sug and barstate.islast
                                        str.tostring(i_h1_fast),    i_h1_fast == sug.h1_fast)
     f_sug_row(11, "HTF slow EMA",     str.tostring(sug.h1_slow),
                                        str.tostring(i_h1_slow),    i_h1_slow == sug.h1_slow)
-    // -- Chop / Consolidation --
-    f_sug_row(12, "Chop filter",      sug.chop_on ? "ON" : "OFF",
-                                       i_chop_on ? "ON" : "OFF",   i_chop_on == sug.chop_on)
-    f_sug_row(13, "Strict H1",        sug.strict_h1 ? "ON" : "OFF",
-                                       i_strict_h1 ? "ON" : "OFF", i_strict_h1 == sug.strict_h1)
-    f_sug_row(14, "ADX minimum",      str.tostring(sug.adx_min, "0.0"),
-                                       str.tostring(i_adx_min, "0.0"), float_eq(i_adx_min, sug.adx_min))
-    f_sug_row(15, "ADX period",       str.tostring(sug.adx_per),
-                                       str.tostring(i_adx_per),    i_adx_per == sug.adx_per)
-    f_sug_row(16, "ADX timeframe",    sug.adx_tf,
-                                       i_adx_tf,                   i_adx_tf == sug.adx_tf)
-    f_sug_row(17, "Whipsaw bars",     str.tostring(sug.bos_conf),
-                                       str.tostring(i_bos_conf),   i_bos_conf == sug.bos_conf)
-    f_sug_row(18, "ATR exp ratio",    str.tostring(sug.atr_exp, "0.00"),
-                                       str.tostring(i_atr_exp, "0.00"), float_eq(i_atr_exp, sug.atr_exp))
-    f_sug_row(19, "ATR MA period",    str.tostring(sug.atr_ma),
-                                       str.tostring(i_atr_ma),     i_atr_ma == sug.atr_ma)
     // -- Simulated Trades --
-    f_sug_row(20, "Cooldown bars",    str.tostring(sug.cooldown),
+    f_sug_row(12, "Cooldown bars",    str.tostring(sug.cooldown),
                                        str.tostring(i_cooldown),   i_cooldown == sug.cooldown)
-    f_sug_row(21, "Max positions",    str.tostring(sug.max_pos),
+    f_sug_row(13, "Max positions",    str.tostring(sug.max_pos),
                                        str.tostring(i_max_pos),    i_max_pos == sug.max_pos)
 
 // =====================================================================
@@ -1377,8 +1266,6 @@ alertcondition(just_closed_long or just_closed_short, "Trade closed", "BG Signal
 // =====================================================================
 // DATA WINDOW PLOTS
 // =====================================================================
-plot(active_count,  "Active count",  color=color.new(color.white, 100), display=display.data_window)
-plot(sim_total_r,   "Sim total R",   color=color.new(color.white, 100), display=display.data_window)
-plot(day_r_now,     "Day R",         color=color.new(color.white, 100), display=display.data_window)
-plot(adx_val,       "ADX",           color=color.new(color.white, 100), display=display.data_window)
-plot(atr_ratio,     "ATR ratio",     color=color.new(color.white, 100), display=display.data_window)
+plot(active_count, "Active count", color=color.new(color.white, 100), display=display.data_window)
+plot(sim_total_r,  "Total Return", color=color.new(color.white, 100), display=display.data_window)
+plot(day_r_now,    "Day R",        color=color.new(color.white, 100), display=display.data_window)
