@@ -68,12 +68,10 @@ g_sim       = "Simulated Trades"
 i_sim_on    = input.bool(true,  "Track simulated trades",         group=g_sim)
 i_max_pos   = input.int(1, "Max simultaneous trades",             minval=1, maxval=10, group=g_sim,
      tooltip="How many sim trades can be open concurrently. 1 = single-position (default, identical to old behavior). >1 lets fresh setups fire even while older trades are still running. Visualization follows the most recently opened active trade only. Suggested by TF: 1m=2-3, 5m=2, 15m=1-2, 30m=1, 1H=1.")
-i_scale_out = input.bool(true, "Scale-out at each TP",            group=g_sim,
-     tooltip="OFF (simple): highest enabled TP wins full R. TP3 = +3R, TP2 = +2R. Intermediate TPs only move SL, no partial taken. ON (doctrine thirds): TP3 win = +2R blended across all enabled TPs.")
 i_use_tp2   = input.bool(false, "Enable TP2 (2R)",                group=g_sim,
-     tooltip="Partial profit at +2R. Uncheck to skip TP2 — TP3 becomes the only target above TP1.")
+     tooltip="Sets a +2R target. When TP2 is the highest enabled TP, the trade closes there for full +2R. When TP3 is also on, TP2 hit just acts as a trail trigger (no partial taken — full position rides to TP3).")
 i_use_tp3   = input.bool(false, "Enable TP3 (3R)",                group=g_sim,
-     tooltip="Partial profit at +3R. Uncheck to make TP2 (or TP1) the final target — higher WR, lower R per win.")
+     tooltip="Sets a +3R target. When enabled, the trade rides to TP3 for full +3R win. Intermediate TPs (TP1, TP2) become trail triggers if their move-SL toggles are on.")
 i_move_be   = input.bool(false, "Move SL → BE after TP1",         group=g_sim,
      tooltip="When TP1 fills, move SL to entry price.")
 i_move_tp1  = input.bool(false, "Move SL → TP1 after TP2",        group=g_sim,
@@ -628,19 +626,16 @@ compute_sig_state() =>
                     evt_open_short   := true
 
     // -- TP / SL chain config (shared across all active trades) --
-    n_tps_active = 1 + (i_use_tp2 ? 1 : 0) + (i_use_tp3 ? 1 : 0)
-    tp_frac      = 1.0 / n_tps_active
-
+    // Final-TP classification: which TP closes the trade?
     tp3_is_final = i_use_tp3 and not i_move_tp2
     tp2_is_final = not i_use_tp3 and i_use_tp2
     tp1_is_final = not i_use_tp3 and not i_use_tp2
 
-    // Win R per final TP. With scale-out: blended average across enabled
-    // TPs (doctrine "thirds" when all 3 are on). Without scale-out: the
-    // full position closes at the final TP, so win R = that TP's raw R.
+    // Full position rides to the highest enabled TP — no scale-out, no
+    // partial fills. Win R = the final TP's raw R value.
     win_r_tp1 = 1.0
-    win_r_tp2 = i_scale_out ? (1.0 + 2.0) / 2.0 : 2.0
-    win_r_tp3 = i_scale_out ? (1.0 + (i_use_tp2 ? 2.0 : 0.0) + 3.0) / n_tps_active : 3.0
+    win_r_tp2 = 2.0
+    win_r_tp3 = 3.0
 
     // -- Process active trades: TP fills + SL exits. Newest-first so we
     //    can remove closed trades safely while iterating. --
@@ -717,26 +712,11 @@ compute_sig_state() =>
                     t.eff_sl   := t.tp2
                     t.eff_sl_r := 2.0
                     evt_trail_step := 3
-            // SL. With scale-out: banked partials from each filled TP +
-            // remaining fraction at current eff_sl_r. TP3 in ride-past
-            // mode (i_move_tp2) doesn't scale out at TP3 hit — that
-            // fraction rides at eff_sl, so it's excluded from "banked".
-            //
-            // Without scale-out: full position rides at eff_sl_r — no
-            // partial bank, no fraction math. r_realized is simply the
-            // current trail level (-1 / 0 / +1 / +2).
+            // SL: full position rides at the current trail level. R
+            // realized is simply eff_sl_r (-1 original, 0 BE, +1 TP1,
+            // +2 TP2).
             if not closed_now and (t.is_long ? low <= t.eff_sl : high >= t.eff_sl)
-                float r_realized = na
-                if i_scale_out
-                    tp3_banked = t.tp3_done and not i_move_tp2
-                    banked = (t.tp1_done ? 1.0 : 0.0) * tp_frac +
-                      (t.tp2_done ? 2.0 : 0.0) * tp_frac +
-                      (tp3_banked  ? 3.0 : 0.0) * tp_frac
-                    hits   = (t.tp1_done ? 1 : 0) + (t.tp2_done ? 1 : 0) + (tp3_banked ? 1 : 0)
-                    rem    = (n_tps_active - hits) * tp_frac
-                    r_realized := banked + rem * t.eff_sl_r
-                else
-                    r_realized := t.eff_sl_r
+                r_realized = t.eff_sl_r
                 sim_total_r += r_realized
                 // SL hit while trailed (eff_sl_r >= 0 means it sat at BE,
                 // TP1, or TP2) counts as a WIN — the trade reached at
@@ -888,7 +868,6 @@ just_closed_short  = closed_by_tp_short or closed_by_sl_short
 // =====================================================================
 // CHART-SIDE DERIVATIONS — final-TP display
 // =====================================================================
-n_tps_active = 1 + (i_use_tp2 ? 1 : 0) + (i_use_tp3 ? 1 : 0)
 tp3_is_final = i_use_tp3 and not i_move_tp2
 tp2_is_final = not i_use_tp3 and i_use_tp2
 tp1_is_final = not i_use_tp3 and not i_use_tp2
