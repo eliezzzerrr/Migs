@@ -1,5 +1,6 @@
 // =====================================================================
-//  BG Signals — TradingView Pine Script v6 (INDICATOR)
+//  BG Golden Signals — TradingView Pine Script v6 (INDICATOR)
+//  XAUUSD-tuned variant of the BG Signals family.
 //  Signal-only display. Buy/Sell labels + SL/TP lines + fill markers.
 //
 //  Strategy:
@@ -29,7 +30,7 @@
 // =====================================================================
 //@version=6
 
-indicator("BG Signals",
+indicator("BG Golden Signals",
      overlay              = true,
      max_lines_count      = 500,
      max_labels_count     = 500,
@@ -1105,7 +1106,7 @@ title_col1_txt = sig_diff ? "sig " + i_sig_tf : "v6"
 if i_show_tbl and barstate.islast
     table.clear(tbl, 0, 0, 1, 15)
 
-    f_cell(0, 0, "BG SIGNALS",     color.new(#ffd54f, 0))
+    f_cell(0, 0, "BG GOLDEN",      color.new(#ffd54f, 0))
     f_cell(0, 1, title_col1_txt,   color.new(#ffd54f, 0))
 
     state_str = switch
@@ -1256,16 +1257,16 @@ if i_show_sug and barstate.islast
 // =====================================================================
 new_bull_forming = bull_forming and not bull_forming[1]
 new_bear_forming = bear_forming and not bear_forming[1]
-alertcondition(new_bull_forming, "BG BUY watch",  "BG Signals: BUY setup forming (waiting for retrace)")
-alertcondition(new_bear_forming, "BG SELL watch", "BG Signals: SELL setup forming (waiting for retrace)")
-alertcondition(bull_setup, "BG BUY setup",  "BG Signals: BUY setup detected")
-alertcondition(bear_setup, "BG SELL setup", "BG Signals: SELL setup detected")
-alertcondition(just_opened_long,  "Sim LONG opened",  "BG Signals: simulated LONG entry")
-alertcondition(just_opened_short, "Sim SHORT opened", "BG Signals: simulated SHORT entry")
-alertcondition(just_hit_tp1,      "TP1 hit",          "BG Signals: TP1 filled")
-alertcondition(just_hit_tp2,      "TP2 hit",          "BG Signals: TP2 filled")
-alertcondition(just_hit_tp3,      "TP3 hit",          "BG Signals: TP3 filled")
-alertcondition(just_closed_long or just_closed_short, "Trade closed", "BG Signals: trade closed")
+alertcondition(new_bull_forming, "BG BUY watch",  "BG Golden:BUY setup forming (waiting for retrace)")
+alertcondition(new_bear_forming, "BG SELL watch", "BG Golden:SELL setup forming (waiting for retrace)")
+alertcondition(bull_setup, "BG BUY setup",  "BG Golden:BUY setup detected")
+alertcondition(bear_setup, "BG SELL setup", "BG Golden:SELL setup detected")
+alertcondition(just_opened_long,  "Sim LONG opened",  "BG Golden:simulated LONG entry")
+alertcondition(just_opened_short, "Sim SHORT opened", "BG Golden:simulated SHORT entry")
+alertcondition(just_hit_tp1,      "TP1 hit",          "BG Golden:TP1 filled")
+alertcondition(just_hit_tp2,      "TP2 hit",          "BG Golden:TP2 filled")
+alertcondition(just_hit_tp3,      "TP3 hit",          "BG Golden:TP3 filled")
+alertcondition(just_closed_long or just_closed_short, "Trade closed", "BG Golden:trade closed")
 
 // =====================================================================
 // DATA WINDOW PLOTS
