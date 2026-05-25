@@ -36,17 +36,17 @@ indicator("BG BTC Signals",
 // =====================================================================
 g_struct    = "Structure Detection"
 i_swing_len = input.int(1,    "Swing pivot strength (bars L/R)", minval=1, group=g_struct,
-     tooltip="Bars needed on each side of a pivot to confirm it. Suggested by TF: 1m=3, 5m=2, 15m=2, 30m=2, 1H=2. Higher = fewer / cleaner swings. Lower = more sensitive (noisy on fast TFs).")
-i_bos_age   = input.int(30,   "Max BOS age (bars)",              minval=1, group=g_struct,
+     tooltip="Bars needed on each side of a pivot to confirm it. Suggested by TF: 1m=3, 5m=2, 15m=1, 30m=2, 1H=2. Higher = fewer / cleaner swings. Lower = more sensitive (noisy on fast TFs).")
+i_bos_age   = input.int(20,   "Max BOS age (bars)",              minval=1, group=g_struct,
      tooltip="How long a BOS stays \"active\" for setup hunting. Suggested by TF: 1m=150, 5m=30, 15m=20, 30m=15, 1H=10.")
-i_ob_age    = input.int(60,   "Max OB lookback (bars)",          minval=1, group=g_struct,
+i_ob_age    = input.int(40,   "Max OB lookback (bars)",          minval=1, group=g_struct,
      tooltip="How far back to scan for the OB candle. Suggested by TF: 1m=300, 5m=60, 15m=40, 30m=30, 1H=25.")
-i_entry_atr = input.float(0.9, "Entry proximity (× ATR)",        minval=0.0, step=0.1, group=g_struct,
-     tooltip="How close price must retrace to the OB edge to fire. 0 = price must touch OB exactly. Suggested by TF: 1m=0.3, 5m=0.5, 15m=0.7, 30m=0.7, 1H=0.7.")
-i_atr_per   = input.int(15,   "ATR period",                      minval=1, group=g_struct,
+i_entry_atr = input.float(0.0, "Entry proximity (× ATR)",        minval=0.0, step=0.1, group=g_struct,
+     tooltip="How close price must retrace to the OB edge to fire. 0 = price must touch OB exactly. Suggested by TF: 1m=0.3, 5m=0.5, 15m=0.0, 30m=0.7, 1H=0.7.")
+i_atr_per   = input.int(14,   "ATR period",                      minval=1, group=g_struct,
      tooltip="Volatility smoothing for SL buffer and entry proximity. Suggested by TF: 1m=50, 5m=14, 15m=14, 30m=14, 1H=14.")
-i_sl_buf    = input.float(0.1, "SL buffer (× ATR beyond OB)",    minval=0.0, step=0.05, group=g_struct,
-     tooltip="Pads SL past the OB extreme to avoid wick stops. Suggested by TF: 1m=0.1, 5m=0.1, 15m=0.15, 30m=0.15, 1H=0.2.")
+i_sl_buf    = input.float(0.05, "SL buffer (× ATR beyond OB)",   minval=0.0, step=0.05, group=g_struct,
+     tooltip="Pads SL past the OB extreme to avoid wick stops. Suggested by TF: 1m=0.1, 5m=0.1, 15m=0.05, 30m=0.15, 1H=0.2.")
 i_min_sl    = input.float(200.0, "Min SL distance ($) — clamp",   minval=0.0, step=10, group=g_struct,
      tooltip="CLAMP: if OB-derived SL would be tighter than this, push it out to meet the floor (trade still fires with the wider stop). 0 = disabled. Suggested for BTCUSD (price ~$60-100k) by TF: 1m=$50, 5m=$100, 15m=$200, 30m=$300, 1H=$500. Scale up/down if BTC trades much higher/lower than this range.")
 i_min_sl_flt = input.float(80.0, "Min SL filter ($) — reject",    minval=0.0, step=5, group=g_struct,
@@ -54,7 +54,7 @@ i_min_sl_flt = input.float(80.0, "Min SL filter ($) — reject",    minval=0.0, 
 
 g_htf       = "HTF Bias"
 i_req_h1    = input.bool(true,  "Require HTF Bias Agreement",    group=g_htf)
-i_h1_tf     = input.timeframe("120", "HTF timeframe",            group=g_htf)
+i_h1_tf     = input.timeframe("60", "HTF timeframe",             group=g_htf)
 i_h1_fast   = input.int(12, "HTF fast EMA",                       minval=1, group=g_htf)
 i_h1_slow   = input.int(80, "HTF slow EMA",                       minval=1, group=g_htf)
 
@@ -74,13 +74,13 @@ i_move_be2  = input.bool(false, "Move SL → BE after TP2",         group=g_sim,
      tooltip="When TP2 fills, move SL to entry price (break-even). Useful when you want TP2 to lock in BE instead of +1R — more room than the TP1 trail. Precedence: 'Move SL → TP1 after TP2' wins if both are checked (TP1 trail is the higher lock).")
 i_move_tp2  = input.bool(false, "Move SL → TP2 after TP3",        group=g_sim,
      tooltip="When TP3 fills, trail SL up to TP2 price (locks +2R) instead of closing — lets the trade ride past TP3 until SL is hit. Requires TP3 enabled.")
-i_cooldown  = input.int(23, "Cooldown bars after sim close",      minval=0, group=g_sim,
+i_cooldown  = input.int(6,  "Cooldown bars after sim close",      minval=0, group=g_sim,
      tooltip="Bars to wait after the LAST sim trade fully closes before opening a new one. Only applies when no trades are active. Suggested by TF: 1m=30, 5m=6, 15m=4, 30m=3, 1H=2.")
 
 g_sess         = "Killzones / Session Filter"
 i_use_sessions = input.bool(true,  "Limit simulation to selected sessions", group=g_sess,
      tooltip="When ON, the sim only OPENS new trades during ticked killzones. Existing trades resolve naturally. Untick all killzones (or untick this master) to allow all hours.")
-i_show_kz      = input.bool(false, "Show Killzone Boxes", inline="KZ_SHOW", group=g_sess)
+i_show_kz      = input.bool(true,  "Show Killzone Boxes", inline="KZ_SHOW", group=g_sess)
 i_show_kz_txt  = input.bool(true,  "Display Text",        inline="KZ_SHOW", group=g_sess)
 i_kz_tz        = input.string("GMT+8", "Timezone",
      options=['America/New_York','GMT-12','GMT-11','GMT-10','GMT-9','GMT-8','GMT-7','GMT-6','GMT-5','GMT-4','GMT-3','GMT-2','GMT-1','GMT+0','GMT+1','GMT+2','GMT+3','GMT+4','GMT+5','GMT+6','GMT+7','GMT+8','GMT+9','GMT+10','GMT+11','GMT+12','GMT+13','GMT+14'],
@@ -92,7 +92,7 @@ i_asia_txt     = input.string("Asia",      "", inline="ASIA",   group=g_sess)
 i_asia_sess    = input.session("0800-1200", "", inline="ASIA",  group=g_sess)
 i_asia_color   = input.color(color.blue,   "", inline="ASIA",   group=g_sess)
 
-i_use_london   = input.bool(false, "", inline="LONDON", group=g_sess)
+i_use_london   = input.bool(true,  "", inline="LONDON", group=g_sess)
 i_london_txt   = input.string("London",    "", inline="LONDON", group=g_sess)
 i_london_sess  = input.session("1400-1700", "", inline="LONDON", group=g_sess)
 i_london_color = input.color(color.red,    "", inline="LONDON", group=g_sess)
@@ -285,15 +285,19 @@ get_suggestions(string tf) =>
         s.cooldown   := 30
         s.max_pos    := 3
     else if tf == "15"
-        s.entry_atr  := 0.7
+        // Validated on BTCUSD 15m: 72% WR over 18 trades, +21R total.
+        // Asia + London killzones active, GMT+8, HTF = 1H bias.
+        s.swing_len  := 1
         s.bos_age    := 20
         s.ob_age     := 40
-        s.sl_buf     := 0.15
+        s.entry_atr  := 0.0
+        s.atr_per    := 14
+        s.sl_buf     := 0.05
         s.min_sl     := 200.0
-        s.min_sl_flt := 100.0
-        s.htf_tf     := "240"
-        s.cooldown   := 4
-        s.max_pos    := 2
+        s.min_sl_flt := 80.0
+        s.htf_tf     := "60"
+        s.cooldown   := 6
+        s.max_pos    := 1
     else if tf == "30"
         s.entry_atr  := 0.7
         s.bos_age    := 15
