@@ -161,20 +161,21 @@ i_col_text  = input.color(color.white, "Label text",                 group=g_col
 // modifying a Trade fetched via array.get mutates the stored instance.
 // =====================================================================
 type Trade
-    bool   is_long      = false
-    float  entry        = na
-    float  sl           = na
-    float  tp1          = na
-    float  tp2          = na
-    float  tp3          = na
-    float  eff_sl       = na
-    float  eff_sl_r     = na
-    bool   tp1_done     = false
-    bool   tp2_done     = false
-    bool   tp3_done     = false
-    int    open_bar     = 0
-    int    open_day     = 0
-    int    open_month   = 0
+    bool   is_long       = false
+    float  entry         = na
+    float  sl            = na
+    float  tp1           = na
+    float  tp2           = na
+    float  tp3           = na
+    float  eff_sl        = na
+    float  eff_sl_r      = na
+    bool   tp1_done      = false
+    bool   tp2_done      = false
+    bool   tp3_done      = false
+    int    open_bar      = 0
+    int    open_day      = 0
+    int    open_month    = 0
+    string bias_at_open  = "ranging"
 
 // =====================================================================
 // SIGNAL-STATE UDT — bundles everything compute_sig_state() returns
@@ -216,10 +217,11 @@ type SigState
     int    day_wins_today   = 0
     int    day_losses_today = 0
     // Diagnostic
-    bool   h1_bull       = false
-    bool   h1_bear       = false
-    string h1_bias_s     = "ranging"
-    string session_now   = "off"
+    bool   h1_bull              = false
+    bool   h1_bear              = false
+    string h1_bias_s            = "ranging"
+    string disp_bias_at_open    = ""
+    string session_now          = "off"
     // Gating flags
     bool   in_date_range = true
     bool   in_session    = true
@@ -610,9 +612,10 @@ compute_sig_state() =>
                     t.tp1_done   := false
                     t.tp2_done   := false
                     t.tp3_done   := false
-                    t.open_bar   := bar_index
-                    t.open_day   := day_today
-                    t.open_month := month_today
+                    t.open_bar     := bar_index
+                    t.open_day     := day_today
+                    t.open_month   := month_today
+                    t.bias_at_open := h1_bias_s
                     array.push(active_trades, t)
                     sim_count       += 1
                     evt_open_long   := true
@@ -637,9 +640,10 @@ compute_sig_state() =>
                     t.tp1_done   := false
                     t.tp2_done   := false
                     t.tp3_done   := false
-                    t.open_bar   := bar_index
-                    t.open_day   := day_today
-                    t.open_month := month_today
+                    t.open_bar     := bar_index
+                    t.open_day     := day_today
+                    t.open_month   := month_today
+                    t.bias_at_open := h1_bias_s
                     array.push(active_trades, t)
                     sim_count        += 1
                     evt_open_short   := true
@@ -777,6 +781,7 @@ compute_sig_state() =>
     bool   d_tp1_done  = not na(disp) and disp.tp1_done
     bool   d_tp2_done  = not na(disp) and disp.tp2_done
     bool   d_tp3_done  = not na(disp) and disp.tp3_done
+    string d_bias_open = not na(disp) ? disp.bias_at_open : ""
 
     // -- Build return UDT --
     SigState s = SigState.new()
@@ -804,10 +809,11 @@ compute_sig_state() =>
     s.day_r_today      := day_r_today
     s.day_wins_today   := day_wins_today
     s.day_losses_today := day_losses_today
-    s.h1_bull          := h1_bull
-    s.h1_bear          := h1_bear
-    s.h1_bias_s        := h1_bias_s
-    s.session_now      := session_now
+    s.h1_bull             := h1_bull
+    s.h1_bear             := h1_bear
+    s.h1_bias_s           := h1_bias_s
+    s.disp_bias_at_open   := d_bias_open
+    s.session_now         := session_now
     s.in_date_range    := in_date_range
     s.in_session       := in_session
     s.cooldown_ok      := cooldown_ok
@@ -859,6 +865,7 @@ day_count_now    = day_wins_now + day_losses_now
 h1_bull          = st.h1_bull
 h1_bear          = st.h1_bear
 h1_bias_s        = st.h1_bias_s
+bias_at_open     = st.disp_bias_at_open
 session_now      = st.session_now
 in_date_range    = st.in_date_range
 in_session       = st.in_session
@@ -1121,8 +1128,14 @@ if i_show_tbl and barstate.islast
     f_cell(2, 0, "Symbol",    color.white)
     f_cell(2, 1, symbol_line, color.white)
 
-    f_cell(3, 0, "1H Bias",   color.white)
-    f_cell(3, 1, h1_bias_s,   h1_bull ? color.lime : h1_bear ? color.red : color.silver)
+    // Bias row: when in trade, show the bias captured AT TRADE ENTRY
+    // (the value the script's gate actually evaluated to allow the trade
+    // — answers "why did this trade fire?"). When idle, show current bias.
+    bias_to_show = active_count > 0 ? bias_at_open : h1_bias_s
+    bias_color = bias_to_show == "bullish" ? color.lime :
+      bias_to_show == "bearish" ? color.red : color.silver
+    f_cell(3, 0, active_count > 0 ? "Bias @ entry" : "Bias", color.white)
+    f_cell(3, 1, bias_to_show, bias_color)
 
     f_cell(4, 0, "Slots",     color.white)
     f_cell(4, 1, str.tostring(active_count) + " / " + str.tostring(i_max_pos),
