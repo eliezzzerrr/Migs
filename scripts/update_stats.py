@@ -157,11 +157,20 @@ def main() -> int:
         outcome_pre = str(fm.get("outcome") or "").upper()
         if outcome_pre == "NA":
             continue
-        # Pattern ID: coerce to str (PyYAML may parse bare "01" as int 1).
-        raw_pid = fm.get("pattern")
-        raw_pid = str(raw_pid) if raw_pid is not None else None
-        if raw_pid == "01": raw_pid = "buy"
-        elif raw_pid == "02": raw_pid = "sell"
+        # Pattern ID: PyYAML may parse bare `01`/`02` as int 1/2 (digits stripped).
+        # Normalize back to zero-padded strings so the legacy-ID migration shim
+        # below catches both quoted and unquoted forms.
+        raw_pid_val = fm.get("pattern")
+        if isinstance(raw_pid_val, int):
+            raw_pid = f"{raw_pid_val:02d}"
+        elif raw_pid_val is None:
+            raw_pid = None
+        else:
+            raw_pid = str(raw_pid_val)
+        if raw_pid == "01":
+            raw_pid = "buy"
+        elif raw_pid == "02":
+            raw_pid = "sell"
         pid = raw_pid or ("buy" if direction == "BUY" else "sell" if direction == "SELL" else None)
         if pid is None:
             continue
@@ -199,6 +208,11 @@ def main() -> int:
             p["be"] += 1
             global_be += 1
         else:
+            sys.stderr.write(
+                f"[WARN] Unknown outcome {outcome!r} in {path} — skipping. "
+                f"Expected one of: TP1_HIT, TP2_HIT, TP3_HIT, SL_HIT, BE, OPEN, NA.\n"
+            )
+            p["trades"] -= 1   # undo the increment above so the bucket totals stay honest
             continue
 
         p["total_r"] += r

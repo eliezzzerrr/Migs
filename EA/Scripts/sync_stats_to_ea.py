@@ -18,28 +18,14 @@ fails, pass --mt5-files explicitly.
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
 import sys
 from pathlib import Path
 
+from _mt5_path import find_mt5_files
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SRC = PROJECT_ROOT / "patterns" / "stats.json"
-
-
-def find_mt5_files() -> Path | None:
-    base = Path(os.environ.get("APPDATA", "")) / "MetaQuotes" / "Terminal"
-    if not base.exists():
-        return None
-    candidates = [
-        p for p in base.iterdir()
-        if p.is_dir() and (p / "MQL5" / "Files").exists()
-    ]
-    if not candidates:
-        return None
-    # most recently modified terminal dir
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return candidates[0] / "MQL5" / "Files"
 
 
 def main() -> int:

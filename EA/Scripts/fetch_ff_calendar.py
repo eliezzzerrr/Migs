@@ -13,11 +13,10 @@ The CSV is written to:
 Run this on a schedule (e.g. Sunday night + Wednesday refresh) via Windows
 Task Scheduler. The EA reads the CSV on every signal evaluation.
 
-Notes on the FF feed:
-  - The JSON endpoint URL changes occasionally. We try a couple, then
-    fall back to scraping the HTML calendar.
-  - We only emit high-impact (red folder) USD events. XAU events are rare
-    on FF; geopolitical/Fed-speak should be added manually if needed.
+We only emit high-impact (red folder) USD events. The FF feed publishes
+timestamps as ISO-8601 with a timezone offset — no other formats are
+supported. XAU events are rare on FF; geopolitical/Fed-speak should be added
+manually if needed.
 """
 
 from __future__ import annotations
@@ -26,11 +25,11 @@ import argparse
 import csv
 import datetime as dt
 import json
-import os
-import re
 import sys
 import urllib.request
 from pathlib import Path
+
+from _mt5_path import find_mt5_files
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROJECT_OUT  = PROJECT_ROOT / "EA" / "Files" / "migs-news.csv"
@@ -39,20 +38,6 @@ FF_JSON_URLS = [
     "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
     "https://cdn-nfs.forexfactory.net/ff_calendar_thisweek.json",
 ]
-
-
-def find_mt5_files() -> Path | None:
-    base = Path(os.environ.get("APPDATA", "")) / "MetaQuotes" / "Terminal"
-    if not base.exists():
-        return None
-    candidates = [
-        p for p in base.iterdir()
-        if p.is_dir() and (p / "MQL5" / "Files").exists()
-    ]
-    if not candidates:
-        return None
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return candidates[0] / "MQL5" / "Files"
 
 
 def fetch_json() -> list[dict]:
@@ -72,34 +57,25 @@ def fetch_json() -> list[dict]:
     return []
 
 
-def to_utc(date_str: str, time_str: str, tz_offset_hours: int) -> dt.datetime | None:
-    """FF JSON timestamps are usually already ISO-with-tz; handle both."""
+def to_utc(date_str: str) -> dt.datetime | None:
+    """Parse an ISO-8601 FF timestamp like '2026-05-21T08:30:00-04:00' to UTC."""
     try:
-        # ISO with offset, e.g. "2026-05-21T08:30:00-04:00"
         return dt.datetime.fromisoformat(date_str).astimezone(dt.timezone.utc)
-    except Exception:
-        pass
-    try:
-        local = dt.datetime.strptime(f"{date_str} {time_str}", "%b %d %Y %I:%M%p")
-        return (local - dt.timedelta(hours=tz_offset_hours)).replace(tzinfo=dt.timezone.utc)
-    except Exception:
+    except (ValueError, TypeError):
         return None
 
 
 def parse_events(raw: list[dict]) -> list[tuple[dt.datetime, str, str, str]]:
     rows: list[tuple[dt.datetime, str, str, str]] = []
     for item in raw:
-        impact = (item.get("impact") or "").strip()
-        if impact.lower() not in ("high", "red"):
+        impact = (item.get("impact") or "").strip().lower()
+        if impact not in ("high", "red"):
             continue
         cur = (item.get("country") or item.get("currency") or "").strip()
-        if cur not in ("USD",):
+        if cur != "USD":
             continue
         title = (item.get("title") or item.get("event") or "").strip()
-        # FF JSON commonly has "date" as full ISO with offset
-        date = item.get("date") or ""
-        time = item.get("time") or ""
-        t = to_utc(date, time, 0)
+        t = to_utc(item.get("date") or "")
         if t is None:
             continue
         rows.append((t, "High", cur, title))

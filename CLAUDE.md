@@ -1,6 +1,20 @@
 # Migs — XAUUSD 5m Trading Agent
 
-This project hosts a Claude Code subagent (`migs-trader`) that grades XAUUSD chart screenshots against the **Migs Hybrid Strategy** doctrine and issues structured signals or NO-TRADE calls.
+This project hosts Claude Code subagents that work on the Migs trading system:
+
+- **`migs-trader`** — grades XAUUSD chart screenshots against the **Migs Hybrid Strategy** doctrine and issues structured signals or NO-TRADE calls.
+- **`pine-writer`** — Pine Script v6 specialist. **Auto-route here for ANY mention of Pine Script, TradingView, .pine files, indicators, strategies, request.security, ta.*, plotshape, alertcondition, etc.** Always loads the `pine-script-expert` skill before writing code. Completely separate from MT5/EA work.
+
+## Routing rules (orchestrator: read these first)
+
+| User mentions | Route to |
+|---|---|
+| Chart screenshot of XAUUSD, "Migs", "grade this", "scout this", trade outcome, weekly review | `migs-trader` subagent |
+| Pine Script, TradingView, `.pine`, indicator, strategy, `ta.*`, `request.security`, compile errors (CE10088 etc.), v5→v6 migration | `pine-writer` subagent |
+| MT5, MetaTrader 5, MQL5, Expert Advisor, EA, `.mq5`/`.mqh` files | `mt5-ea-writer` skill (no dedicated subagent — use the skill directly) |
+| General project questions, doctrine reading, file management | Handle directly without invoking a subagent |
+
+**Do not write Pine Script code inline as the orchestrator.** Always delegate to the `pine-writer` subagent so the `pine-script-expert` skill is loaded and the v6 hard rules are applied. The Pine domain has too many version-specific footguns to write from memory.
 
 ## How to invoke
 
@@ -21,7 +35,12 @@ If a scout reveals a tradeable setup and you decide to take it, follow up with "
 ```
 Migs/
 ├── CLAUDE.md                       ← you are here
-├── .claude/agents/migs-trader.md   ← agent definition
+├── .claude/agents/
+│   ├── migs-trader.md              ← XAUUSD strategy agent
+│   └── pine-writer.md              ← Pine Script v6 specialist (TradingView)
+├── TradingView/                    ← .pine source files
+│   ├── BG-BTC-Signals.pine
+│   └── BG-Golden-Signals.pine
 ├── doctrine/                       ← strategy reference (loaded on demand)
 │   ├── migs-hybrid-strategy.md     ← full doctrine
 │   ├── grading-rubric.md           ← 12-point quality rubric (A+ → F, journaling only)
