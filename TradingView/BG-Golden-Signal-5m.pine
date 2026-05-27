@@ -1,6 +1,7 @@
 // =====================================================================
-//  BG Golden Signals — TradingView Pine Script v6 (INDICATOR)
+//  BG Golden Signal 5m — TradingView Pine Script v6 (INDICATOR)
 //  XAUUSD-tuned variant of the BG Signals family.
+//  5m-tuned variant. For 15m, use BG-Golden-Signal-15m.pine.
 //  Signal-only display. Buy/Sell labels + SL/TP lines + fill markers.
 //
 //  Strategy:
@@ -25,7 +26,7 @@
 // =====================================================================
 //@version=6
 
-indicator("BG Golden Signals",
+indicator("BG Golden Signal 5m",
      overlay              = true,
      max_lines_count      = 500,
      max_labels_count     = 500,
@@ -46,15 +47,20 @@ i_entry_atr = input.float(0.9, "Entry proximity (× ATR)",        minval=0.0, st
 i_atr_per   = input.int(15,   "ATR period",                      minval=1, group=g_struct,
      tooltip="Volatility smoothing for SL buffer and entry proximity. Suggested by TF: 1m=50, 5m=14, 15m=14, 30m=14, 1H=14.")
 i_sl_buf    = input.float(0.1, "SL buffer (× ATR beyond OB)",    minval=0.0, step=0.05, group=g_struct,
-     tooltip="Pads SL past the OB extreme to avoid wick stops. Suggested by TF: 1m=0.1, 5m=0.1, 15m=0.15, 30m=0.15, 1H=0.2.")
-i_min_sl    = input.float(10.0, "Min SL distance ($) — clamp",    minval=0.0, step=0.5, group=g_struct,
+     tooltip="Pads SL past the OB extreme to avoid wick stops. Suggested by TF: 1m=0.1, 5m=0.15, 15m=0.5, 30m=0.15, 1H=0.2.")
+i_min_sl    = input.float(9.0, "Min SL distance ($) — clamp",     minval=0.0, step=0.5, group=g_struct,
      tooltip="CLAMP: if OB-derived SL would be tighter than this, push it out to meet the floor (trade still fires with the wider stop). 0 = disabled. Suggested for XAUUSD by TF: 1m=$5, 5m=$7, 15m=$10, 30m=$15, 1H=$25.")
 i_min_sl_flt = input.float(4.0, "Min SL filter ($) — reject",     minval=0.0, step=0.5, group=g_struct,
      tooltip="FILTER: reject the trade entirely if the OB-derived SL distance is below this threshold (BEFORE the clamp is applied). 0 = disabled. Use this to skip setups whose natural OB is so small the trade would be all-spread. Different from the clamp above: filter SKIPS, clamp WIDENS. Suggested for XAUUSD by TF: 1m=$3, 5m=$5, 15m=$7, 30m=$10, 1H=$15.")
 
 g_htf       = "HTF Bias"
-i_req_h1    = input.bool(true,  "Require HTF Bias Agreement",    group=g_htf)
-i_h1_tf     = input.timeframe("120", "HTF timeframe",            group=g_htf)
+i_req_h1    = input.bool(false, "Require HTF Bias Agreement",    group=g_htf,
+     tooltip="Master toggle for the HTF bias gate. Validated 2026-05-26 on XAUUSD 5m: HTF gate OFF outperformed HTF gate ON. Strict match-only (24 trades, 50% WR, +12R) vs No gate (59 trades, 55.9% WR, +40R) — turning the gate off gave 3.33x the total return with higher WR. Default = OFF on 5m for this reason. Re-enable for testing or if your regime changes. Sub-toggles below only matter when this is ON.")
+i_h1_allow_match = input.bool(true, "  └ Allow when bias matches direction", group=g_htf,
+     tooltip="Sub-toggle of HTF Bias Agreement. When ON, LONG fires during strictly bullish HTF, SHORT fires during strictly bearish HTF. Untick to BLOCK direction-aligned trades (rarely useful — combine with 'Allow when bias is ranging' to trade only during chop). Ignored when master 'Require HTF Bias Agreement' is OFF.")
+i_h1_allow_range = input.bool(true, "  └ Allow when bias is ranging", group=g_htf,
+     tooltip="Sub-toggle of HTF Bias Agreement. When ON, trades fire in both directions during HTF ranging periods (neither strictly bullish nor strictly bearish). Untick to require STRICT bias alignment — LONG only during clearly bullish HTF, SHORT only during clearly bearish HTF. Tightens the filter; usually reduces trade count and may raise or lower WR depending on market regime. Ignored when master 'Require HTF Bias Agreement' is OFF.")
+i_h1_tf     = input.timeframe("60", "HTF timeframe",             group=g_htf)
 i_h1_fast   = input.int(12, "HTF fast EMA",                       minval=1, group=g_htf)
 i_h1_slow   = input.int(80, "HTF slow EMA",                       minval=1, group=g_htf)
 
@@ -74,8 +80,8 @@ i_move_be2  = input.bool(false, "Move SL → BE after TP2",         group=g_sim,
      tooltip="When TP2 fills, move SL to entry price (break-even). Useful when you want TP2 to lock in BE instead of +1R — more room than the TP1 trail. Precedence: 'Move SL → TP1 after TP2' wins if both are checked (TP1 trail is the higher lock).")
 i_move_tp2  = input.bool(false, "Move SL → TP2 after TP3",        group=g_sim,
      tooltip="When TP3 fills, trail SL up to TP2 price (locks +2R) instead of closing — lets the trade ride past TP3 until SL is hit. Requires TP3 enabled.")
-i_cooldown  = input.int(23, "Cooldown bars after sim close",      minval=0, group=g_sim,
-     tooltip="Bars to wait after the LAST sim trade fully closes before opening a new one. Only applies when no trades are active. Suggested by TF: 1m=30, 5m=6, 15m=4, 30m=3, 1H=2.")
+i_cooldown  = input.int(12, "Cooldown bars after sim close",      minval=0, group=g_sim,
+     tooltip="Bars to wait after the LAST sim trade fully closes before opening a new one. Only applies when no trades are active. Suggested by TF: 1m=30, 5m=0, 15m=2, 30m=3, 1H=2.")
 
 g_sess         = "Killzones / Session Filter"
 i_use_sessions = input.bool(true,  "Limit simulation to selected sessions", group=g_sess,
@@ -87,30 +93,70 @@ i_kz_tz        = input.string("GMT+8", "Timezone",
      group=g_sess,
      tooltip="All killzone times below are interpreted in this timezone. Default GMT+8 = PHT (Philippine Time, no DST). Switch to America/New_York if you want session times entered as NY local with DST auto-handled. NOTE: the default session times below are aligned to PHT during NY summer (EDT, Mar-Nov). During NY winter (EST, Nov-Mar) the actual NY sessions land 1 hour later in PHT — adjust the times by +1 hour, or switch the timezone to America/New_York for hands-off DST.")
 
-i_use_asia     = input.bool(true,  "", inline="ASIA",   group=g_sess)
-i_asia_txt     = input.string("Asia",      "", inline="ASIA",   group=g_sess)
-i_asia_sess    = input.session("0800-1200", "", inline="ASIA",  group=g_sess)
-i_asia_color   = input.color(color.blue,   "", inline="ASIA",   group=g_sess)
+i_use_asia       = input.bool(true,  "", inline="ASIA",   group=g_sess)
+i_asia_txt       = input.string("Asia",      "", inline="ASIA",   group=g_sess)
+i_asia_sess      = input.session("0800-1200", "", inline="ASIA",  group=g_sess)
+i_asia_color     = input.color(color.blue,   "", inline="ASIA",   group=g_sess)
+i_asia_dow_mon   = input.bool(true, "Mon", inline="ASIA_DOW", group=g_sess,
+     tooltip="Per-session day-of-week filter for the Asia killzone. Tick days when Asia is ALLOWED to open new trades; untick days when Asia should be SKIPPED. Defaults: all 7 days ticked (no restriction). Existing trades that opened on an allowed day resolve naturally even if the next bar lands on a blocked day. Weekday timezone: Asia/Manila.")
+i_asia_dow_tue   = input.bool(true, "Tue", inline="ASIA_DOW", group=g_sess)
+i_asia_dow_wed   = input.bool(true, "Wed", inline="ASIA_DOW", group=g_sess)
+i_asia_dow_thu   = input.bool(true, "Thu", inline="ASIA_DOW", group=g_sess)
+i_asia_dow_fri   = input.bool(true, "Fri", inline="ASIA_DOW", group=g_sess)
+i_asia_dow_sat   = input.bool(true, "Sat", inline="ASIA_DOW", group=g_sess)
+i_asia_dow_sun   = input.bool(true, "Sun", inline="ASIA_DOW", group=g_sess)
 
-i_use_london   = input.bool(false, "", inline="LONDON", group=g_sess)
-i_london_txt   = input.string("London",    "", inline="LONDON", group=g_sess)
-i_london_sess  = input.session("1400-1700", "", inline="LONDON", group=g_sess)
-i_london_color = input.color(color.red,    "", inline="LONDON", group=g_sess)
+i_use_london     = input.bool(true,  "", inline="LONDON", group=g_sess)
+i_london_txt     = input.string("London",    "", inline="LONDON", group=g_sess)
+i_london_sess    = input.session("1400-1700", "", inline="LONDON", group=g_sess)
+i_london_color   = input.color(color.red,    "", inline="LONDON", group=g_sess)
+i_london_dow_mon = input.bool(false, "Mon", inline="LONDON_DOW", group=g_sess,
+     tooltip="Per-session day-of-week filter for the London killzone. Tick days when London is ALLOWED to open new trades; untick days when London should be SKIPPED. Use this to block the 2 losing London weekdays while keeping the 3 profitable ones. Defaults: all 7 days unticked (London disabled by weekday — re-enable per day as needed). Weekday timezone: Asia/Manila.")
+i_london_dow_tue = input.bool(false, "Tue", inline="LONDON_DOW", group=g_sess)
+i_london_dow_wed = input.bool(false, "Wed", inline="LONDON_DOW", group=g_sess)
+i_london_dow_thu = input.bool(false, "Thu", inline="LONDON_DOW", group=g_sess)
+i_london_dow_fri = input.bool(false, "Fri", inline="LONDON_DOW", group=g_sess)
+i_london_dow_sat = input.bool(false, "Sat", inline="LONDON_DOW", group=g_sess)
+i_london_dow_sun = input.bool(false, "Sun", inline="LONDON_DOW", group=g_sess)
 
-i_use_nyam     = input.bool(false, "", inline="NYAM",   group=g_sess)
-i_nyam_txt     = input.string("NY AM",     "", inline="NYAM",   group=g_sess)
-i_nyam_sess    = input.session("2130-2300", "", inline="NYAM",  group=g_sess)
-i_nyam_color   = input.color(#089981,      "", inline="NYAM",   group=g_sess)
+i_use_nyam       = input.bool(true,  "", inline="NYAM",   group=g_sess)
+i_nyam_txt       = input.string("NY AM",     "", inline="NYAM",   group=g_sess)
+i_nyam_sess      = input.session("2130-2300", "", inline="NYAM",  group=g_sess)
+i_nyam_color     = input.color(#089981,      "", inline="NYAM",   group=g_sess)
+i_nyam_dow_mon   = input.bool(false, "Mon", inline="NYAM_DOW", group=g_sess,
+     tooltip="Per-session day-of-week filter for the NY AM killzone. Same semantics as the Asia/London filters: tick days when NY AM is ALLOWED to open new trades. Defaults: all 7 days unticked (NY AM disabled by weekday — re-enable per day as needed). Weekday timezone: Asia/Manila.")
+i_nyam_dow_tue   = input.bool(false, "Tue", inline="NYAM_DOW", group=g_sess)
+i_nyam_dow_wed   = input.bool(false, "Wed", inline="NYAM_DOW", group=g_sess)
+i_nyam_dow_thu   = input.bool(false, "Thu", inline="NYAM_DOW", group=g_sess)
+i_nyam_dow_fri   = input.bool(false, "Fri", inline="NYAM_DOW", group=g_sess)
+i_nyam_dow_sat   = input.bool(false, "Sat", inline="NYAM_DOW", group=g_sess)
+i_nyam_dow_sun   = input.bool(false, "Sun", inline="NYAM_DOW", group=g_sess)
 
-i_use_nylu     = input.bool(false, "", inline="NYLU",   group=g_sess)
-i_nylu_txt     = input.string("NY Lunch",  "", inline="NYLU",   group=g_sess)
-i_nylu_sess    = input.session("0000-0100", "", inline="NYLU",  group=g_sess)
-i_nylu_color   = input.color(color.yellow, "", inline="NYLU",   group=g_sess)
+i_use_nylu       = input.bool(false, "", inline="NYLU",   group=g_sess)
+i_nylu_txt       = input.string("NY Lunch",  "", inline="NYLU",   group=g_sess)
+i_nylu_sess      = input.session("0000-0100", "", inline="NYLU",  group=g_sess)
+i_nylu_color     = input.color(color.yellow, "", inline="NYLU",   group=g_sess)
+i_nylu_dow_mon   = input.bool(true, "Mon", inline="NYLU_DOW", group=g_sess,
+     tooltip="Per-session day-of-week filter for the NY Lunch killzone. Same semantics as the Asia/London filters. Defaults: all 7 days ticked. Weekday timezone: Asia/Manila.")
+i_nylu_dow_tue   = input.bool(true, "Tue", inline="NYLU_DOW", group=g_sess)
+i_nylu_dow_wed   = input.bool(true, "Wed", inline="NYLU_DOW", group=g_sess)
+i_nylu_dow_thu   = input.bool(true, "Thu", inline="NYLU_DOW", group=g_sess)
+i_nylu_dow_fri   = input.bool(true, "Fri", inline="NYLU_DOW", group=g_sess)
+i_nylu_dow_sat   = input.bool(true, "Sat", inline="NYLU_DOW", group=g_sess)
+i_nylu_dow_sun   = input.bool(true, "Sun", inline="NYLU_DOW", group=g_sess)
 
-i_use_nypm     = input.bool(false, "", inline="NYPM",   group=g_sess)
-i_nypm_txt     = input.string("NY PM",     "", inline="NYPM",   group=g_sess)
-i_nypm_sess    = input.session("0130-0400", "", inline="NYPM",  group=g_sess)
-i_nypm_color   = input.color(color.purple, "", inline="NYPM",   group=g_sess)
+i_use_nypm       = input.bool(false, "", inline="NYPM",   group=g_sess)
+i_nypm_txt       = input.string("NY PM",     "", inline="NYPM",   group=g_sess)
+i_nypm_sess      = input.session("0130-0400", "", inline="NYPM",  group=g_sess)
+i_nypm_color     = input.color(color.purple, "", inline="NYPM",   group=g_sess)
+i_nypm_dow_mon   = input.bool(true, "Mon", inline="NYPM_DOW", group=g_sess,
+     tooltip="Per-session day-of-week filter for the NY PM killzone. Same semantics as the Asia/London filters. Defaults: all 7 days ticked. Weekday timezone: Asia/Manila.")
+i_nypm_dow_tue   = input.bool(true, "Tue", inline="NYPM_DOW", group=g_sess)
+i_nypm_dow_wed   = input.bool(true, "Wed", inline="NYPM_DOW", group=g_sess)
+i_nypm_dow_thu   = input.bool(true, "Thu", inline="NYPM_DOW", group=g_sess)
+i_nypm_dow_fri   = input.bool(true, "Fri", inline="NYPM_DOW", group=g_sess)
+i_nypm_dow_sat   = input.bool(true, "Sat", inline="NYPM_DOW", group=g_sess)
+i_nypm_dow_sun   = input.bool(true, "Sun", inline="NYPM_DOW", group=g_sess)
 
 i_box_trans    = input.int(70, "Box Transparency",  minval=0, maxval=100, group=g_sess)
 i_text_trans   = input.int(50, "Text Transparency", minval=0, maxval=100, group=g_sess)
@@ -248,21 +294,21 @@ type SigState
 // =====================================================================
 type Suggestions
     // Structure Detection
-    int    swing_len    = 2
+    int    swing_len    = 1
     int    bos_age      = 30
     int    ob_age       = 60
-    float  entry_atr    = 0.5
-    int    atr_per      = 14
+    float  entry_atr    = 0.9
+    int    atr_per      = 15
     float  sl_buf       = 0.1
-    float  min_sl       = 7.0
-    float  min_sl_flt   = 5.0
+    float  min_sl       = 9.0
+    float  min_sl_flt   = 4.0
     // HTF Bias
     string htf_tf       = "60"
     int    h1_fast      = 12
     int    h1_slow      = 80
     // Simulated Trades
-    int    cooldown     = 6
-    int    max_pos      = 2
+    int    cooldown     = 12
+    int    max_pos      = 1
 
 get_suggestions(string tf) =>
     Suggestions s = Suggestions.new()
@@ -280,17 +326,26 @@ get_suggestions(string tf) =>
         s.cooldown   := 30
         s.max_pos    := 3
     else if tf == "15"
-        s.entry_atr  := 0.7
+        // Tuned for XAUUSD London 1400-1700 PHT, Tue-Fri only.
+        // Validated 2026-05-26: 18 trades, 13W/5L, 72.2% WR, +21R.
+        // Asia 0800-1200 was tested and DOES NOT work at this TF — Asia
+        // ranges form (not break) during the session, producing 22% WR
+        // / -15R with the prior suggestions. Stick to London.
+        s.swing_len  := 1
         s.bos_age    := 20
         s.ob_age     := 40
-        s.sl_buf     := 0.15
-        s.min_sl     := 10.0
-        s.min_sl_flt := 7.0
-        s.htf_tf     := "240"
-        s.cooldown   := 4
-        s.max_pos    := 2
+        s.entry_atr  := 0.4
+        s.atr_per    := 14
+        s.sl_buf     := 0.5
+        s.min_sl     := 7.0
+        s.min_sl_flt := 4.0
+        s.htf_tf     := "60"
+        s.cooldown   := 2
+        s.max_pos    := 1
     else if tf == "30"
+        s.swing_len  := 2
         s.entry_atr  := 0.7
+        s.atr_per    := 14
         s.bos_age    := 15
         s.ob_age     := 30
         s.sl_buf     := 0.15
@@ -300,7 +355,9 @@ get_suggestions(string tf) =>
         s.cooldown   := 3
         s.max_pos    := 1
     else if tf == "60"
+        s.swing_len  := 2
         s.entry_atr  := 0.7
+        s.atr_per    := 14
         s.bos_age    := 10
         s.ob_age     := 25
         s.sl_buf     := 0.2
@@ -377,9 +434,14 @@ compute_sig_state() =>
     atr_val = ta.atr(i_atr_per)
 
     // -- 1H bias (nested HTF request from sig-TF context) --
-    h1_close = request.security(syminfo.tickerid, i_h1_tf, close, barmerge.gaps_off, barmerge.lookahead_off)
-    h1_fast  = request.security(syminfo.tickerid, i_h1_tf, ta.ema(close, i_h1_fast), barmerge.gaps_off, barmerge.lookahead_off)
-    h1_slow  = request.security(syminfo.tickerid, i_h1_tf, ta.ema(close, i_h1_slow), barmerge.gaps_off, barmerge.lookahead_off)
+    // Non-repaint pattern: [1] + lookahead_on ensures we read the
+    // PREVIOUS closed HTF bar's value (not the forming bar), so realtime
+    // signals and historical replays produce identical entries. Trade-off:
+    // bias is 1 closed HTF bar stale (~ tf duration behind). Do NOT
+    // "fix" this back to close + lookahead_off — that reintroduces repaint.
+    h1_close = request.security(syminfo.tickerid, i_h1_tf, close[1], barmerge.gaps_off, barmerge.lookahead_on)
+    h1_fast  = request.security(syminfo.tickerid, i_h1_tf, ta.ema(close, i_h1_fast)[1], barmerge.gaps_off, barmerge.lookahead_on)
+    h1_slow  = request.security(syminfo.tickerid, i_h1_tf, ta.ema(close, i_h1_slow)[1], barmerge.gaps_off, barmerge.lookahead_on)
     h1_bull  = h1_fast > h1_slow and h1_close > h1_fast
     h1_bear  = h1_fast < h1_slow and h1_close < h1_fast
     h1_bias_s = h1_bull ? "bullish" : h1_bear ? "bearish" : "ranging"
@@ -464,10 +526,16 @@ compute_sig_state() =>
     near_bull = have_ob_bull and not na(dist_bull) and dist_bull <= i_entry_atr * atr_val
     near_bear = have_ob_bear and not na(dist_bear) and dist_bear <= i_entry_atr * atr_val
 
-    // HTF agreement: when required, the bias must match the trade
-    // direction OR be neutral (not actively opposed).
-    h1_ok_bull = not i_req_h1 or h1_bull or not h1_bear
-    h1_ok_bear = not i_req_h1 or h1_bear or not h1_bull
+    // HTF bias gate — composable from two sub-toggles when master is ON.
+    // Counter-trend (e.g., LONG during strictly bearish) is ALWAYS blocked
+    // when master is ON, regardless of sub-toggle state.
+    h1_is_range = not h1_bull and not h1_bear
+    h1_ok_bull = not i_req_h1 or
+      (i_h1_allow_match and h1_bull) or
+      (i_h1_allow_range and h1_is_range)
+    h1_ok_bear = not i_req_h1 or
+      (i_h1_allow_match and h1_bear) or
+      (i_h1_allow_range and h1_is_range)
 
     bull_setup = have_ob_bull and near_bull and h1_ok_bull
     bear_setup = have_ob_bear and near_bear and h1_ok_bear
@@ -547,6 +615,12 @@ compute_sig_state() =>
       i_use_last30   ? inside_last30   :
       i_use_last60   ? inside_last60   :
       inside_custom
+
+    // Day-of-week info used by the per-session DoW gate below
+    // (Asia/Manila). Global DoW filter was removed in favor of
+    // per-session toggles under "Killzones / Session Filter".
+    bar_dow = dayofweek(time, "Asia/Manila")
+
     in_date_range = not filter_active or inside_range
 
     // -- Session filter (5 killzones, all in the user-selected timezone). --
@@ -556,12 +630,53 @@ compute_sig_state() =>
     in_kz_nylu   = not na(time(timeframe.period, i_nylu_sess,   i_kz_tz))
     in_kz_nypm   = not na(time(timeframe.period, i_nypm_sess,   i_kz_tz))
 
+    // Per-session day-of-week filter — each killzone independently
+    // restricts which weekdays it can OPEN trades on. All 7 ticked =
+    // no restriction (default). Uses bar_dow computed above in
+    // Asia/Manila. ANDs into in_session per-session, so blocking a day
+    // for London doesn't affect Asia/NYAM/etc.
+    asia_dow_ok = (bar_dow == dayofweek.monday    and i_asia_dow_mon) or
+      (bar_dow == dayofweek.tuesday   and i_asia_dow_tue) or
+      (bar_dow == dayofweek.wednesday and i_asia_dow_wed) or
+      (bar_dow == dayofweek.thursday  and i_asia_dow_thu) or
+      (bar_dow == dayofweek.friday    and i_asia_dow_fri) or
+      (bar_dow == dayofweek.saturday  and i_asia_dow_sat) or
+      (bar_dow == dayofweek.sunday    and i_asia_dow_sun)
+    london_dow_ok = (bar_dow == dayofweek.monday    and i_london_dow_mon) or
+      (bar_dow == dayofweek.tuesday   and i_london_dow_tue) or
+      (bar_dow == dayofweek.wednesday and i_london_dow_wed) or
+      (bar_dow == dayofweek.thursday  and i_london_dow_thu) or
+      (bar_dow == dayofweek.friday    and i_london_dow_fri) or
+      (bar_dow == dayofweek.saturday  and i_london_dow_sat) or
+      (bar_dow == dayofweek.sunday    and i_london_dow_sun)
+    nyam_dow_ok = (bar_dow == dayofweek.monday    and i_nyam_dow_mon) or
+      (bar_dow == dayofweek.tuesday   and i_nyam_dow_tue) or
+      (bar_dow == dayofweek.wednesday and i_nyam_dow_wed) or
+      (bar_dow == dayofweek.thursday  and i_nyam_dow_thu) or
+      (bar_dow == dayofweek.friday    and i_nyam_dow_fri) or
+      (bar_dow == dayofweek.saturday  and i_nyam_dow_sat) or
+      (bar_dow == dayofweek.sunday    and i_nyam_dow_sun)
+    nylu_dow_ok = (bar_dow == dayofweek.monday    and i_nylu_dow_mon) or
+      (bar_dow == dayofweek.tuesday   and i_nylu_dow_tue) or
+      (bar_dow == dayofweek.wednesday and i_nylu_dow_wed) or
+      (bar_dow == dayofweek.thursday  and i_nylu_dow_thu) or
+      (bar_dow == dayofweek.friday    and i_nylu_dow_fri) or
+      (bar_dow == dayofweek.saturday  and i_nylu_dow_sat) or
+      (bar_dow == dayofweek.sunday    and i_nylu_dow_sun)
+    nypm_dow_ok = (bar_dow == dayofweek.monday    and i_nypm_dow_mon) or
+      (bar_dow == dayofweek.tuesday   and i_nypm_dow_tue) or
+      (bar_dow == dayofweek.wednesday and i_nypm_dow_wed) or
+      (bar_dow == dayofweek.thursday  and i_nypm_dow_thu) or
+      (bar_dow == dayofweek.friday    and i_nypm_dow_fri) or
+      (bar_dow == dayofweek.saturday  and i_nypm_dow_sat) or
+      (bar_dow == dayofweek.sunday    and i_nypm_dow_sun)
+
     in_session = not i_use_sessions or
-      (i_use_asia   and in_kz_asia)   or
-      (i_use_london and in_kz_london) or
-      (i_use_nyam   and in_kz_nyam)   or
-      (i_use_nylu   and in_kz_nylu)   or
-      (i_use_nypm   and in_kz_nypm)
+      (i_use_asia   and in_kz_asia   and asia_dow_ok)   or
+      (i_use_london and in_kz_london and london_dow_ok) or
+      (i_use_nyam   and in_kz_nyam   and nyam_dow_ok)   or
+      (i_use_nylu   and in_kz_nylu   and nylu_dow_ok)   or
+      (i_use_nypm   and in_kz_nypm   and nypm_dow_ok)
 
     // Active session display label (priority: NY AM > London > NY Lunch >
     // NY PM > Asia — chosen so the most "tradeable" session wins overlap)
@@ -1085,7 +1200,7 @@ pos_lookup(string s) =>
         "bottom_left"  => position.bottom_left
         => position.bottom_right
 
-var table tbl = table.new(pos_lookup(i_tbl_pos), 2, 16,
+var table tbl = table.new(pos_lookup(i_tbl_pos), 2, 17,
                           bgcolor      = color.new(color.black, 20),
                           border_color = color.new(color.gray, 50),
                           border_width = 1,
@@ -1098,7 +1213,7 @@ f_cell(int _row, int _col, string _txt, color _clr) =>
 title_col1_txt = "v6"
 
 if i_show_tbl and barstate.islast
-    table.clear(tbl, 0, 0, 1, 15)
+    table.clear(tbl, 0, 0, 1, 16)
 
     f_cell(0, 0, "BG GOLDEN",      color.new(#ffd54f, 0))
     f_cell(0, 1, title_col1_txt,   color.new(#ffd54f, 0))
@@ -1128,44 +1243,52 @@ if i_show_tbl and barstate.islast
     f_cell(2, 0, "Symbol",    color.white)
     f_cell(2, 1, symbol_line, color.white)
 
-    // Bias row: when in trade, show the bias captured AT TRADE ENTRY
-    // (the value the script's gate actually evaluated to allow the trade
-    // — answers "why did this trade fire?"). When idle, show current bias.
+    // Bias rows: when in trade, show TWO rows — the bias captured AT
+    // TRADE ENTRY (row 3, the value the gate actually evaluated to allow
+    // the trade) AND the CURRENT live bias (row 4, so you can see if the
+    // market has flipped against you mid-trade). When idle, only row 3
+    // is populated with the current bias; row 4 stays blank after clear.
     bias_to_show = active_count > 0 ? bias_at_open : h1_bias_s
     bias_color = bias_to_show == "bullish" ? color.lime :
       bias_to_show == "bearish" ? color.red : color.silver
     f_cell(3, 0, active_count > 0 ? "Bias @ entry" : "Bias", color.white)
     f_cell(3, 1, bias_to_show, bias_color)
 
-    f_cell(4, 0, "Slots",     color.white)
-    f_cell(4, 1, str.tostring(active_count) + " / " + str.tostring(i_max_pos),
+    if active_count > 0
+        bias_now_color = h1_bias_s == "bullish" ? color.lime :
+          h1_bias_s == "bearish" ? color.red : color.silver
+        f_cell(4, 0, "Bias (now)", color.white)
+        f_cell(4, 1, h1_bias_s, bias_now_color)
+
+    f_cell(5, 0, "Slots",     color.white)
+    f_cell(5, 1, str.tostring(active_count) + " / " + str.tostring(i_max_pos),
                   active_count >= i_max_pos ? color.orange : color.silver)
 
-    f_cell(5, 0, "Trades", color.white)
-    f_cell(5, 1, str.tostring(sim_count) + "  W:" + str.tostring(sim_wins) +
+    f_cell(6, 0, "Trades", color.white)
+    f_cell(6, 1, str.tostring(sim_count) + "  W:" + str.tostring(sim_wins) +
                   " L:" + str.tostring(sim_losses), color.white)
 
     wr = sim_wins + sim_losses > 0 ? sim_wins * 100.0 / (sim_wins + sim_losses) : 0.0
-    f_cell(6, 0, "Win Rate",    color.white)
-    f_cell(6, 1, str.tostring(wr, "0.0") + "%",
+    f_cell(7, 0, "Win Rate",    color.white)
+    f_cell(7, 1, str.tostring(wr, "0.0") + "%",
                   wr >= 40 ? color.lime : color.red)
 
-    f_cell(7, 0, "Total Return", color.white)
-    f_cell(7, 1, str.tostring(sim_total_r, "+0.00") + "R",
+    f_cell(8, 0, "Total Return", color.white)
+    f_cell(8, 1, str.tostring(sim_total_r, "+0.00") + "R",
                   sim_total_r >= 0 ? color.lime : color.red)
 
-    f_cell(8, 0, "Day R (PHT)", color.white)
-    f_cell(8, 1, str.tostring(day_r_now, "+0.00") + "R",
+    f_cell(9, 0, "Day R (PHT)", color.white)
+    f_cell(9, 1, str.tostring(day_r_now, "+0.00") + "R",
                   day_r_now >= 0 ? color.lime : color.red)
 
-    f_cell(9, 0, "Day trades", color.white)
-    f_cell(9, 1, str.tostring(day_count_now) + "  W:" + str.tostring(day_wins_now) +
+    f_cell(10, 0, "Day trades", color.white)
+    f_cell(10, 1, str.tostring(day_count_now) + "  W:" + str.tostring(day_wins_now) +
                   " L:" + str.tostring(day_losses_now),
                   day_count_now > 0 ? color.white : color.gray)
 
     day_wr = day_count_now > 0 ? day_wins_now * 100.0 / day_count_now : 0.0
-    f_cell(10, 0, "Day WR",    color.white)
-    f_cell(10, 1, day_count_now > 0 ? str.tostring(day_wr, "0.0") + "%" : "—",
+    f_cell(11, 0, "Day WR",    color.white)
+    f_cell(11, 1, day_count_now > 0 ? str.tostring(day_wr, "0.0") + "%" : "—",
                    day_count_now == 0 ? color.gray :
                    day_wr >= 40       ? color.lime : color.red)
 
@@ -1173,17 +1296,17 @@ if i_show_tbl and barstate.islast
         sl_tag = sim_eff_sl_r >= 2.0 ? " (TP2)" :
           sim_eff_sl_r >= 1.0 ? " (TP1)" :
           sim_eff_sl_r >= 0.0 ? " (BE)"  : ""
-        f_cell(11, 0, "Dir (latest)", color.white)
-        f_cell(11, 1, sim_long ? "BUY" : "SELL", sim_long ? color.lime : color.red)
-        f_cell(12, 0, "Entry",   color.white)
-        f_cell(12, 1, str.tostring(sim_entry, format.mintick), color.white)
-        f_cell(13, 0, "SL" + sl_tag, color.white)
-        f_cell(13, 1, str.tostring(sim_eff_sl, format.mintick),
+        f_cell(12, 0, "Dir (latest)", color.white)
+        f_cell(12, 1, sim_long ? "BUY" : "SELL", sim_long ? color.lime : color.red)
+        f_cell(13, 0, "Entry",   color.white)
+        f_cell(13, 1, str.tostring(sim_entry, format.mintick), color.white)
+        f_cell(14, 0, "SL" + sl_tag, color.white)
+        f_cell(14, 1, str.tostring(sim_eff_sl, format.mintick),
                        sim_eff_sl_r >= 0 ? i_col_be : color.red)
-        f_cell(14, 0, "TP1" + (sim_tp1_done ? " ✓" : ""), color.white)
-        f_cell(14, 1, str.tostring(sim_tp1, format.mintick), sim_tp1_done ? color.gray : color.lime)
-        f_cell(15, 0, final_tp_lbl + " (final)", color.white)
-        f_cell(15, 1, str.tostring(final_tp_price, format.mintick), color.lime)
+        f_cell(15, 0, "TP1" + (sim_tp1_done ? " ✓" : ""), color.white)
+        f_cell(15, 1, str.tostring(sim_tp1, format.mintick), sim_tp1_done ? color.gray : color.lime)
+        f_cell(16, 0, final_tp_lbl + " (final)", color.white)
+        f_cell(16, 1, str.tostring(final_tp_price, format.mintick), color.lime)
 
 // =====================================================================
 // TUNING SUGGESTIONS PANEL
