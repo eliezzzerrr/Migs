@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BG Golden Signal — Strategy Explainer</title>
+<style>
+  :root{
+    --bg:#0e1117; --panel:#161b24; --grid:#1e2530; --txt:#d7dce3; --muted:#8b95a4;
+    --up:#26a69a; --down:#ef5350; --buy:#26a69a; --sell:#ef5350;
+    --ob:#ef5350; --tp:#26c6a8; --sl:#ef5350; --entry:#e0c341; --accent:#ffd54f;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;line-height:1.5}
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 20px 64px}
+  h1{font-size:26px;margin:0 0 4px;color:#fff}
+  h1 .tag{color:var(--accent)}
+  .sub{color:var(--muted);font-size:14px;margin-bottom:24px}
+  h2{font-size:18px;color:var(--accent);border-bottom:1px solid var(--grid);padding-bottom:6px;margin:34px 0 14px}
+  .chartcard{background:var(--panel);border:1px solid var(--grid);border-radius:10px;padding:10px;overflow-x:auto}
+  svg{display:block;min-width:1000px}
+  .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px;margin-top:18px}
+  .step{background:var(--panel);border:1px solid var(--grid);border-left:3px solid var(--accent);border-radius:8px;padding:12px 14px}
+  .step .n{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--accent);color:#000;font-weight:700;font-size:13px;margin-right:8px}
+  .step h3{display:inline;font-size:15px;color:#fff}
+  .step p{margin:8px 0 0;font-size:13.5px;color:var(--muted)}
+  .step code{background:#0c0f15;color:#9fd0c8;padding:1px 5px;border-radius:4px;font-size:12.5px}
+  table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--grid);border-radius:8px;overflow:hidden;font-size:13.5px;margin-top:8px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--grid)}
+  th{background:#0c0f15;color:var(--accent);font-weight:600}
+  td.k{color:var(--muted)}
+  .pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:600}
+  .pill.long{background:rgba(38,166,154,.18);color:var(--up)}
+  .pill.short{background:rgba(239,83,80,.18);color:var(--down)}
+  .legend{display:flex;flex-wrap:wrap;gap:16px;margin:10px 2px 0;font-size:12.5px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .sw{width:14px;height:14px;border-radius:3px;display:inline-block}
+  .foot{color:var(--muted);font-size:12px;margin-top:30px;border-top:1px solid var(--grid);padding-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><span class="tag">BG Golden Signal</span> — How the Strategy Works</h1>
+  <div class="sub">XAUUSD · Break-of-Structure + Order-Block retest · annotated SELL example (the mechanics mirror for BUY)</div>
+
+  <div class="chartcard">
+    <svg id="chart" viewBox="0 0 1100 600" xmlns="http://www.w3.org/2000/svg"></svg>
+  </div>
+  <div class="legend">
+    <span><span class="sw" style="background:#26a69a"></span>Bullish candle</span>
+    <span><span class="sw" style="background:#ef5350"></span>Bearish candle</span>
+    <span><span class="sw" style="background:rgba(239,83,80,.22);border:1px solid #ef5350"></span>Order Block (supply)</span>
+    <span><span class="sw" style="background:#e0c341"></span>Entry</span>
+    <span><span class="sw" style="background:#ef5350"></span>Stop Loss</span>
+    <span><span class="sw" style="background:#26c6a8"></span>Take Profit</span>
+  </div>
+
+  <h2>The 6 mechanical steps</h2>
+  <div class="steps">
+    <div class="step"><span class="n">1</span><h3>Mark structure (swings)</h3>
+      <p>Pivot highs/lows are detected with <code>swing strength = 1</code>. The most recent swing low becomes the <b>liquidity level</b> the market must break to confirm a bearish shift.</p></div>
+    <div class="step"><span class="n">2</span><h3>Spot the Order Block</h3>
+      <p>The <b>last bullish (up) candle before the drop</b> is tagged as the supply Order Block. This is "where smart money sold." Its high/low define the zone. (For BUY: last bearish candle before an up-impulse.)</p></div>
+    <div class="step"><span class="n">3</span><h3>Break of Structure (BOS)</h3>
+      <p>A candle <b>closes below the swing low</b> → bearish BOS confirmed. The drop is the impulse leg. BOS stays "active" for <code>Max BOS age = 30</code> bars.</p></div>
+    <div class="step"><span class="n">4</span><h3>Wait for the retrace</h3>
+      <p>Price must pull back <b>up into the OB</b>, within <code>Entry × ATR = 0.9</code> of the zone edge. No retrace = no trade. This is the patience filter that drives the win rate.</p></div>
+    <div class="step"><span class="n">5</span><h3>Fire + place the stop</h3>
+      <p>On a confirmed bar touching the OB, the <span class="pill short">SELL</span> fires. <b>SL sits just beyond the OB</b> (<code>+0.1×ATR</code>, min&nbsp;$9). The entry→SL distance <b>= 1R</b>, the unit everything else is measured in.</p></div>
+    <div class="step"><span class="n">6</span><h3>Targets at 1R / 2R / 3R</h3>
+      <p>TP1=+1R, TP2=+2R, TP3=+3R. Full position rides to the highest enabled TP (currently <b>TP2 = +2R final</b>). Optional trails (BE-after-TP1 etc.) are off by default.</p></div>
+  </div>
+
+  <h2>This example, by the numbers</h2>
+  <table>
+    <tr><th>Field</th><th>Value</th><th>How it's derived</th></tr>
+    <tr><td class="k">Direction</td><td><span class="pill short">SELL</span></td><td>Bearish BOS + supply OB retrace</td></tr>
+    <tr><td class="k">Entry</td><td>4540.0</td><td>Price retraces into OB zone (proximity ≤ 0.9×ATR)</td></tr>
+    <tr><td class="k">Stop Loss</td><td>4550.0</td><td>OB high (4549) + 0.1×ATR buffer → <b>1R = 10.0</b></td></tr>
+    <tr><td class="k">TP1 (+1R)</td><td>4530.0</td><td>Entry − 1×R</td></tr>
+    <tr><td class="k">TP2 (+2R · final)</td><td>4520.0</td><td>Entry − 2×R → full-position exit here</td></tr>
+    <tr><td class="k">TP3 (+3R)</td><td>4510.0</td><td>Disabled by default (shown faint)</td></tr>
+    <tr><td class="k">HTF bias filter</td><td>OFF</td><td>Validated: ON lowers 5m win rate (EMA lag)</td></tr>
+    <tr><td class="k">Session</td><td>Asia killzone</td><td>0800–1200 PHT</td></tr>
+  </table>
+
+  <div class="foot">
+    Generated for the Migs project · BG-Golden-Signal-5m.pine · This is a schematic teaching diagram, not live market data.
+    Open in any browser. The candle geometry is hand-built to make each mechanical step legible.
+  </div>
+</div>
+
+<script>
+// ---- candle data: [open, high, low, close] telling the SELL story ----
+const candles = [
+  [4500,4506,4498,4505],[4505,4512,4503,4510],[4510,4513,4506,4508], // rise, minor swing low @4506
+  [4508,4518,4507,4516],[4516,4530,4515,4528],[4528,4542,4527,4540], // push up
+  [4540,4549,4539,4547], // 6: ORDER BLOCK (last up candle, high 4549)
+  [4547,4548,4538,4540],[4540,4541,4528,4530],[4530,4531,4518,4520], // drop starts
+  [4520,4521,4505,4507], // 10: BOS candle (closes below 4506 swing low)
+  [4507,4509,4500,4502],[4502,4504,4496,4498], // impulse bottom
+  [4498,4508,4497,4506],[4506,4516,4505,4514],[4514,4524,4513,4522], // retrace up
+  [4522,4532,4521,4530],[4530,4539,4529,4537],[4537,4543,4536,4540], // into OB
+  [4540,4548,4539,4542], // 19: ENTRY trigger (touches OB) -> SELL @4540
+  [4542,4543,4532,4534],[4534,4535,4528,4530], // 21: TP1 @4530
+  [4530,4531,4521,4523],[4523,4524,4519,4520], // 23: TP2 @4520 (final)
+  [4520,4521,4509,4510] // 24: would-be TP3 @4510
+];
+const OB_IDX=6, BOS_IDX=10, ENTRY_IDX=19, TP1_IDX=21, TP2_IDX=23;
+
+// ---- geometry ----
+const L=70,R=978,T=60,B=560;
+const pMin=4490,pMax=4556;
+const n=candles.length, slot=(R-L)/(n+1), cw=Math.min(20,slot*0.62);
+const x=i=>L+slot*(i+1);
+const y=p=>T+(pMax-p)/(pMax-pMin)*(B-T);
+
+const NS="http://www.w3.org/2000/svg";
+const svg=document.getElementById('chart');
+const el=(t,a)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;};
+const add=(t,a)=>{const e=el(t,a);svg.appendChild(e);return e;};
+function text(tx,xx,yy,a={}){const e=el('text',Object.assign({x:xx,y:yy,fill:a.fill||'#d7dce3','font-size':a.size||12,'font-family':'Segoe UI,sans-serif','text-anchor':a.anchor||'start','font-weight':a.weight||400},a.extra||{}));e.textContent=tx;svg.appendChild(e);return e;}
+
+// grid + price axis
+for(let p=4490;p<=4555;p+=10){const yy=y(p);add('line',{x1:L,y1:yy,x2:R,y2:yy,stroke:'#1e2530','stroke-width':1});text(p.toFixed(0),R+6,yy+4,{fill:'#8b95a4',size:11});}
+
+// ---- Order Block zone (supply) ----
+const obTop=y(4549), obBot=y(4540);
+add('rect',{x:x(OB_IDX)-cw/2,y:obTop,width:x(ENTRY_IDX)-x(OB_IDX)+cw,height:obBot-obTop,fill:'rgba(239,83,80,0.13)',stroke:'#ef5350','stroke-width':1,'stroke-dasharray':'4 3'});
+text('ORDER BLOCK · supply',x(OB_IDX)-cw/2+4,obTop-6,{fill:'#ef9a98',size:11,weight:600});
+
+// ---- swing-low liquidity line ----
+add('line',{x1:x(2),y1:y(4506),x2:x(BOS_IDX)+cw,y2:y(4506),stroke:'#8b95a4','stroke-width':1.2,'stroke-dasharray':'2 4'});
+text('swing low (liquidity)',x(2),y(4506)+14,{fill:'#8b95a4',size:10.5});
+
+// ---- level lines: SL / Entry / TP1 / TP2 / TP3 ----
+function level(p,color,label,dash,faint){
+  add('line',{x1:x(ENTRY_IDX),y1:y(p),x2:R,y2:y(p),stroke:color,'stroke-width':faint?1:1.6,'stroke-dasharray':dash||'',opacity:faint?0.5:1});
+  const tg=add('rect',{x:R-1,y:y(p)-9,width:62,height:18,fill:color,opacity:faint?0.5:0.92,rx:3});
+  text(label,R+30,y(p)+4,{fill:'#0e1117',size:10.5,weight:700,anchor:'middle'});
+}
+level(4550,'#ef5350','SL 4550','5 3');
+level(4540,'#e0c341','SELL 4540');
+level(4530,'#26c6a8','TP1 4530','4 3');
+level(4520,'#26c6a8','TP2 4520');
+level(4510,'#26c6a8','TP3 4510','2 3',true);
+
+// ---- candles ----
+candles.forEach((c,i)=>{
+  const [o,h,l,cl]=c, up=cl>=o, col=up?'#26a69a':'#ef5350', cx=x(i);
+  add('line',{x1:cx,y1:y(h),x2:cx,y2:y(l),stroke:col,'stroke-width':1.4});
+  const yo=y(o),yc=y(cl),top=Math.min(yo,yc),hgt=Math.max(2,Math.abs(yc-yo));
+  add('rect',{x:cx-cw/2,y:top,width:cw,height:hgt,fill:col,rx:1});
+});
+
+// ---- numbered callouts ----
+function callout(i,priceTop,num,label,dy){
+  const cx=x(i), yy=y(priceTop)-(dy||30);
+  add('circle',{cx:cx,cy:yy,r:11,fill:'#ffd54f',stroke:'#0e1117','stroke-width':1.5});
+  text(num,cx,yy+4,{fill:'#000',size:12,weight:700,anchor:'middle'});
+  add('line',{x1:cx,y1:yy+11,x2:cx,y2:y(priceTop)-3,stroke:'#ffd54f','stroke-width':1,'stroke-dasharray':'2 2'});
+  if(label)text(label,cx,yy-16,{fill:'#ffd54f',size:10.5,weight:600,anchor:'middle'});
+}
+callout(2,4513,'1','swings',26);
+callout(OB_IDX,4549,'2','OB',26);
+callout(BOS_IDX,4521,'3','BOS',92);
+callout(16,4532,'4','retrace',30);
+callout(ENTRY_IDX,4548,'5','entry',30);
+callout(TP2_IDX,4524,'6','targets',30);
+
+// BOS marker arrow at break
+add('line',{x1:x(BOS_IDX),y1:y(4506),x2:x(BOS_IDX),y2:y(4500),stroke:'#ef5350','stroke-width':2});
+text('▼ break',x(BOS_IDX)+4,y(4500)+2,{fill:'#ef5350',size:10,weight:600});
+
+// title inside chart
+text('XAUUSD · 5m · schematic',L,30,{fill:'#8b95a4',size:12});
+</script>
+</body>
+</html>
