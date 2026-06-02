@@ -68,12 +68,14 @@ Migs/
 ├── .claude/
 │   ├── agents/migs-trader.md       ← the discretionary subagent definition
 │   └── skills/mt5-ea-writer/       ← project skill for MQL5 EA development
-├── EA/                             ← MT5 Expert Advisor (DEMO-only by default)
-│   ├── Experts/Migs/               ← MigsEA.mq5
-│   ├── Include/Migs/               ← strategy modules
+├── EA/                             ← MT5 Expert Advisor (Pine-parity, single-file)
+│   ├── Experts/BG/                 ← BG-Golden-Signal-5m.mq5
+│   ├── README.md                   ← EA install + input reference
 │   └── Scripts/                    ← stats sync + ForexFactory news fetch
-└── TradingView/                    ← Pine v6 indicator
-    └── Migs-Hybrid-v6.pine
+└── TradingView/                    ← Pine v6 indicators
+    ├── BG-Golden-Signal-5m.pine    ← 5m signal engine (the EA mirrors this)
+    ├── BG-Golden-Signal-15m.pine   ← 15m variant
+    └── BG-BTC-Signals.pine         ← BTC variant
 ```
 
 ## Components

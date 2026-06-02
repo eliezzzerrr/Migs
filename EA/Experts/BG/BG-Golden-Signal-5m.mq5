@@ -1,14 +1,31 @@
 //+------------------------------------------------------------------+
-//|                                                MigsHybrid.mq5      |
-//|                                            Copyright 2026, Migs    |
+//|                                       BG-Golden-Signal-5m.mq5      |
+//|                                            Copyright 2026, BG      |
 //|                                                                    |
-//|  PINE-PARITY BUILD — mirrors BG-Golden-Signals.pine (v6).          |
+//|  PINE-PARITY BUILD — mirrors BG-Golden-Signal-5m.pine (v6).        |
 //|  Goal: ≥95% backtest agreement with TradingView indicator.         |
 //|                                                                    |
 //|  CHANGELOG                                                          |
+//|   v0.8.0 (2026-06-02)                                              |
+//|     • Renamed to BG-Golden-Signal-5m.mq5; full BG rebrand          |
+//|       (copyright, panel, struct, logs, journal dir, strategy tag). |
+//|     • Defaults aligned to the live BG-Golden-Signal-5m "v3" chart: |
+//|         – HTF bias gate DEFAULT OFF (InpRequireHTF=false). Added   |
+//|           HTF sub-toggles (InpHTFAllowMatch / InpHTFAllowRange)    |
+//|           for exact parity with the pine composable gate; counter- |
+//|           trend always blocked when the gate is ON.                |
+//|         – HTF timeframe H2 ("120"); Min-SL clamp $10; cooldown 12. |
+//|         – Per-session London DoW inputs (InpLondonDow*) +          |
+//|           LondonDoWOk(); London ENABLED Mon + Wed. Asia Mon-Fri;   |
+//|           NY sessions idle in the pine, left off in the EA.        |
+//|     • Session-TZ fix: InpServerGMTOffset converts the broker       |
+//|       SERVER clock → UTC so GMT+8 sessions land on any broker.     |
+//|       Panel now shows live MT5 + Manila clocks to calibrate it.    |
+//|     • Fixed-lot option (InpUseFixedLots / InpFixedLots) alongside  |
+//|       % risk; panel shows lot sizing + live open volume.           |
 //|   v0.6.0 (2026-05-22)                                              |
 //|     • Full rewrite to Pine-parity. All logic mirrors                |
-//|       BG-Golden-Signals.pine exactly:                               |
+//|       BG-Golden-Signal-5m.pine exactly:                            |
 //|         – pivothigh/pivotlow(strength=1) for swings                 |
 //|         – transition BOS (close>swing AND close[1]<=swing)          |
 //|         – BOS persistence: active flag + bos_bar (age-out by       |
@@ -24,7 +41,7 @@
 //|         – SL-while-trailed counts as WIN (eff_sl_r >= 0)            |
 //|         – No partials, no 3-position thirds                         |
 //|     • Stripped: ADX filter, whipsaw filter, ATR expansion filter   |
-//|       — none exist in BG-Golden-Signals.pine                        |
+//|       — none exist in BG-Golden-Signal-5m.pine                     |
 //|   v0.5.0 — transition-based BOS, EMA+close HTF bias                |
 //|   v0.4.0 — TF-agnostic execution                                    |
 //|                                                                    |
@@ -52,9 +69,9 @@
 //|   [✓] SL pre-flight check against SYMBOL_TRADE_STOPS_LEVEL          |
 //|   [✓] IsNewBar() gate around bar-close logic                        |
 //+------------------------------------------------------------------+
-#property copyright "Migs"
-#property version   "0.60"
-#property description "Migs Hybrid v0.6 — Pine-parity build matching BG-Golden-Signals.pine."
+#property copyright "BG"
+#property version   "0.80"
+#property description "BG Golden 5m v0.8 — Pine-parity build matching BG-Golden-Signal-5m.pine."
 
 //==================================================================//
 //  INCLUDES                                                          //
@@ -64,7 +81,7 @@
 #include <Trade\PositionInfo.mqh>
 
 //==================================================================//
-//  INPUTS — defaults mirror BG-Golden-Signals.pine exactly           //
+//  INPUTS — defaults mirror BG-Golden-Signal-5m.pine exactly         //
 //==================================================================//
 input group "=== Structure Detection (Pine: g_struct) ==="
 input int    InpSwingLen          = 1;          // Pine i_swing_len
@@ -77,8 +94,10 @@ input double InpMinSLClamp        = 10.0;       // Pine i_min_sl ($ widen)
 input double InpMinSLFilter       = 4.0;        // Pine i_min_sl_flt ($ reject)
 
 input group "=== HTF Bias (Pine: g_htf) ==="
-input bool            InpRequireHTF     = true;        // Pine i_req_h1
-input ENUM_TIMEFRAMES InpHTFTimeframe   = PERIOD_H2;   // Pine "120" = 2H
+input bool            InpRequireHTF     = false;       // Pine i_req_h1 (5m default OFF — validated best)
+input bool            InpHTFAllowMatch  = true;        // Pine i_h1_allow_match (LONG in bull / SHORT in bear)
+input bool            InpHTFAllowRange  = true;        // Pine i_h1_allow_range (trade during HTF ranging)
+input ENUM_TIMEFRAMES InpHTFTimeframe   = PERIOD_H2;   // Pine "120" = 2H (live v3 chart)
 input int             InpHTFFastEMA     = 12;          // Pine i_h1_fast
 input int             InpHTFSlowEMA     = 80;          // Pine i_h1_slow
 
@@ -91,19 +110,29 @@ input bool   InpMoveBE            = false;      // Pine i_move_be (SL→BE after
 input bool   InpMoveTP1AfterTP2   = false;      // Pine i_move_tp1
 input bool   InpMoveBEAfterTP2    = false;      // Pine i_move_be2
 input bool   InpMoveTP2AfterTP3   = false;      // Pine i_move_tp2 (ride past TP3)
-input int    InpCooldownBars      = 23;         // Pine i_cooldown
+input int    InpCooldownBars      = 12;         // Pine i_cooldown
 
 input group "=== Risk Sizing ==="
-input double InpRiskPercent       = 1.0;        // % equity risked per trade
+input double InpRiskPercent       = 1.0;        // % equity risked per trade (when InpUseFixedLots = false)
+input bool   InpUseFixedLots      = false;      // ON = trade a fixed lot size; OFF = size by % risk
+input double InpFixedLots         = 0.10;       // Fixed lot size (used when InpUseFixedLots = true)
 input double InpMaxLots           = 100.0;      // safety cap
 
 input group "=== Session Filter (Pine: g_sess, default GMT+8 Asia) ==="
 input bool   InpUseSessions       = true;       // Pine i_use_sessions
-input int    InpSessionGMTOffset  = 8;          // Pine "GMT+8" — Manila/PHT
+input int    InpSessionGMTOffset  = 8;          // Session strings' timezone (GMT+8 Manila) — leave at 8
+input int    InpServerGMTOffset   = 0;          // Broker SERVER clock UTC offset (GMT+3 broker → 3). Calibrate via the panel's Manila clock.
 input bool   InpUseAsia           = true;       // Pine i_use_asia
 input string InpAsiaSession       = "08:00-12:00";  // Pine i_asia_sess
-input bool   InpUseLondon         = false;
+input bool   InpUseLondon         = true;       // London ENABLED — live v3 chart trades Mon + Wed
 input string InpLondonSession     = "14:00-17:00";
+input bool   InpLondonDowMon      = true;       // London day-of-week gate — Pine i_london_dow_* (GMT+8 weekday)
+input bool   InpLondonDowTue      = false;
+input bool   InpLondonDowWed      = true;
+input bool   InpLondonDowThu      = false;
+input bool   InpLondonDowFri      = false;
+input bool   InpLondonDowSat      = true;       // Sat/Sun ticked on the chart, but no weekend gold bars → inert
+input bool   InpLondonDowSun      = true;
 input bool   InpUseNYAM           = false;
 input string InpNYAMSession       = "21:30-23:00";
 input bool   InpUseNYLunch        = false;
@@ -129,7 +158,7 @@ input double InpDailyMaxLossR     = 5.0;        // soft kill switch; 0 = off
 
 input group "=== Journal ==="
 input bool   InpEnableJournal     = true;
-input string InpJournalDir        = "Migs\\journal";
+input string InpJournalDir        = "BG\\journal";
 
 input group "=== Logging ==="
 input bool   InpVerbose           = true;
@@ -151,8 +180,8 @@ input color            InpPanelWarnClr     = clrDarkOrange;
 //==================================================================//
 //  CONSTANTS                                                         //
 //==================================================================//
-#define MIGS_VERSION           "0.6.0"
-#define PANEL_PREFIX           "MigsStatus_"
+#define BG_VERSION           "0.7.0"
+#define PANEL_PREFIX           "BGStatus_"
 #define MAX_BARS_FETCH         500    // hard cap on CopyHigh/Low/Close lookback
 #define HTF_BIAS_CACHE_SECS    60     // re-evaluate HTF bias at this cadence
 #define ATR_BUFFER_BARS        5      // require ATRPer + this many bars before reading
@@ -175,7 +204,7 @@ struct Swing
 
 // Per-position trade state — mirrors Pine Trade UDT.
 // Multi-position support: we hold an array of these.
-struct MigsTrade
+struct BGTrade
 {
    ulong    ticket;            // broker ticket
    bool     is_long;
@@ -239,7 +268,7 @@ int           g_day_losses        = 0;
 bool          g_day_kill          = false;
 
 // Open positions (multi-position support, up to InpMaxPositions)
-MigsTrade     g_trades[];
+BGTrade     g_trades[];
 
 // Aggregate stats (displayed on panel)
 int           g_sim_count         = 0;
@@ -259,7 +288,7 @@ void MLog(string tag, string msg)
 {
    if(!InpVerbose && tag != "ERR" && tag != "TRADE" && tag != "JOURNAL" && tag != "RISK" && tag != "BOS")
       return;
-   PrintFormat("[MIGS][%s] %s", tag, msg);
+   PrintFormat("[BG][%s] %s", tag, msg);
 }
 
 string DirStr(const ENUM_DIR d) { return d == DIR_BUY ? "BUY" : d == DIR_SELL ? "SELL" : "NONE"; }
@@ -408,17 +437,41 @@ bool InSession(const string sess_str, const datetime utc_now, const int gmt_offs
       return (now_mins >= from_mins || now_mins < to_mins);  // window crosses midnight
 }
 
-bool IsInAnyAllowedSession(const datetime utc_now)
+// Per-session day-of-week gate for London (Pine i_london_dow_*). The weekday
+// is read in the session timezone (InpSessionGMTOffset, default GMT+8 /
+// Manila) to match the pine's dayofweek(time, "Asia/Manila"). All days ticked
+// = no restriction; the 5m-validated good-WR set is Tue-Fri.
+bool LondonDoWOk(const datetime utc_now)
+{
+   datetime local = utc_now + InpSessionGMTOffset * 3600;
+   MqlDateTime dt; TimeToStruct(local, dt);
+   switch(dt.day_of_week)   // 0=Sun, 1=Mon ... 6=Sat
+   {
+      case 1:  return InpLondonDowMon;
+      case 2:  return InpLondonDowTue;
+      case 3:  return InpLondonDowWed;
+      case 4:  return InpLondonDowThu;
+      case 5:  return InpLondonDowFri;
+      case 6:  return InpLondonDowSat;
+      default: return InpLondonDowSun;   // 0 = Sunday
+   }
+}
+
+bool IsInAnyAllowedSession(const datetime server_now)
 {
    if(!InpUseSessions) return true;
    bool any_enabled = InpUseAsia || InpUseLondon || InpUseNYAM || InpUseNYLunch || InpUseNYPM;
    if(!any_enabled) return true;   // all sessions disabled → allow all hours
 
-   if(InpUseAsia    && InSession(InpAsiaSession,    utc_now, InpSessionGMTOffset)) { g_session_now = "Asia";    return true; }
-   if(InpUseLondon  && InSession(InpLondonSession,  utc_now, InpSessionGMTOffset)) { g_session_now = "London";  return true; }
-   if(InpUseNYAM    && InSession(InpNYAMSession,    utc_now, InpSessionGMTOffset)) { g_session_now = "NY AM";   return true; }
-   if(InpUseNYLunch && InSession(InpNYLunchSession, utc_now, InpSessionGMTOffset)) { g_session_now = "NY Lunch";return true; }
-   if(InpUseNYPM    && InSession(InpNYPMSession,    utc_now, InpSessionGMTOffset)) { g_session_now = "NY PM";   return true; }
+   // Broker server clock → true UTC, so the GMT+8 session windows (and the
+   // London DoW gate) land correctly no matter what timezone the broker uses.
+   datetime utc = server_now - InpServerGMTOffset * 3600;
+
+   if(InpUseAsia    && InSession(InpAsiaSession,    utc, InpSessionGMTOffset)) { g_session_now = "Asia";    return true; }
+   if(InpUseLondon  && InSession(InpLondonSession,  utc, InpSessionGMTOffset) && LondonDoWOk(utc)) { g_session_now = "London";  return true; }
+   if(InpUseNYAM    && InSession(InpNYAMSession,    utc, InpSessionGMTOffset)) { g_session_now = "NY AM";   return true; }
+   if(InpUseNYLunch && InSession(InpNYLunchSession, utc, InpSessionGMTOffset)) { g_session_now = "NY Lunch";return true; }
+   if(InpUseNYPM    && InSession(InpNYPMSession,    utc, InpSessionGMTOffset)) { g_session_now = "NY PM";   return true; }
    g_session_now = "off";
    return false;
 }
@@ -633,16 +686,24 @@ bool BuildSetup(SetupCandidate &out)
                                        dist / atr, InpEntryATR);
      return false; }
 
-   // HTF agreement — SOFTER rule (Pine):
-   //   h1_ok_bull = NOT i_req_h1 OR h1_bull OR NOT h1_bear
-   //   h1_ok_bear = NOT i_req_h1 OR h1_bear OR NOT h1_bull
+   // HTF agreement — composable sub-toggles, exact parity with the pine
+   // gate (i_h1_allow_match / i_h1_allow_range). Master OFF (the 5m-
+   // validated default) always passes. When the master gate is ON,
+   // counter-trend (LONG in strict bear / SHORT in strict bull) is ALWAYS
+   // blocked regardless of the sub-toggles:
+   //   h1_ok_bull = !req || (allow_match && bull) || (allow_range && range)
+   //   h1_ok_bear = !req || (allow_match && bear) || (allow_range && range)
    ENUM_BIAS bias = GetCachedHTFBias();
-   bool h1_ok = true;
-   if(InpRequireHTF)
-   {
-      if(dir == DIR_BUY)  h1_ok = (bias == BIAS_BULL || bias != BIAS_BEAR);
-      else                h1_ok = (bias == BIAS_BEAR || bias != BIAS_BULL);
-   }
+   bool h1_is_range = (bias == BIAS_RANGE);
+   bool h1_ok;
+   if(dir == DIR_BUY)
+      h1_ok =    !InpRequireHTF
+              || (InpHTFAllowMatch && bias == BIAS_BULL)
+              || (InpHTFAllowRange && h1_is_range);
+   else
+      h1_ok =    !InpRequireHTF
+              || (InpHTFAllowMatch && bias == BIAS_BEAR)
+              || (InpHTFAllowRange && h1_is_range);
    if(!h1_ok)
    { out.reject_reason = "HTF bias conflicts (" + BiasStr(bias) + ")"; return false; }
 
@@ -751,14 +812,14 @@ bool OpenTrade(const SetupCandidate &s)
 {
    if(!InpEnableTrade) return false;
 
-   double lots = CalcLotsForRisk(s.risk);
+   double lots = InpUseFixedLots ? NormalizeLots(InpFixedLots) : CalcLotsForRisk(s.risk);
    if(lots <= 0) { MLog("ERR", "lots = 0"); return false; }
 
    g_trade.SetExpertMagicNumber((ulong)InpMagic);
    g_trade.SetDeviationInPoints(InpSlippagePoints);
    g_trade.SetTypeFillingBySymbol(_Symbol);
 
-   string cmt = StringFormat("Migs:%s", s.direction == DIR_BUY ? "buy" : "sell");
+   string cmt = StringFormat("BG:%s", s.direction == DIR_BUY ? "buy" : "sell");
    bool ok = false;
    // SL attached, TP=0 (managed internally)
    if(s.direction == DIR_BUY)
@@ -1133,9 +1194,9 @@ int WriteOpenJournal(const SetupCandidate &s, const ulong ticket, const MqlDateT
    JournalWriteLine(fh, StringFormat("timestamp_utc: %04d-%02d-%02dT%02d:%02d:%02dZ",
                                      dt.year, dt.mon, dt.day, dt.hour, dt.min, dt.sec));
    JournalWriteLine(fh, "direction: " + DirStr(s.direction));
-   JournalWriteLine(fh, "strategy: Migs");
+   JournalWriteLine(fh, "strategy: BG");
    JournalWriteLine(fh, "source: EA");
-   JournalWriteLine(fh, "ea_version: \"" + MIGS_VERSION + "\"");
+   JournalWriteLine(fh, "ea_version: \"" + BG_VERSION + "\"");
    JournalWriteLine(fh, "pattern: \"" + (s.direction == DIR_BUY ? "buy" : "sell") + "\"");
    JournalWriteLine(fh, "execution_tf: " + EnumToString((ENUM_TIMEFRAMES)_Period));
    JournalWriteLine(fh, "htf_tf: " + EnumToString(InpHTFTimeframe));
@@ -1162,7 +1223,7 @@ int WriteOpenJournal(const SetupCandidate &s, const ulong ticket, const MqlDateT
 }
 
 // Locate the journal file using the OPEN-time year/month (passed in via
-// MigsTrade) — never the current time. A trade opened on June 30 and closed
+// BGTrade) — never the current time. A trade opened on June 30 and closed
 // on July 1 used to silently miss its file.
 bool UpdateCloseJournal(const int id, const int year, const int month,
                         const double r_realized, const string reason)
@@ -1240,8 +1301,13 @@ void DrawPanel()
    int decisive = g_sim_wins + g_sim_losses;
    double wr = decisive > 0 ? (double)g_sim_wins / decisive : 0.0;
 
-   EnsureLabel("hdr", 0, y, "MIGS HYBRID v" + MIGS_VERSION + " (Pine parity)", InpPanelHeaderClr); y += line_h;
+   EnsureLabel("hdr", 0, y, "BG GOLDEN 5m v" + BG_VERSION + " (Pine parity)", InpPanelHeaderClr); y += line_h;
    EnsureLabel("sym", 0, y, StringFormat("Symbol  : %s %s", _Symbol, EnumToString((ENUM_TIMEFRAMES)_Period)), InpPanelColor); y += line_h;
+
+   datetime srv_t = TimeTradeServer();
+   datetime mnl_t = srv_t - InpServerGMTOffset * 3600 + InpSessionGMTOffset * 3600;
+   EnsureLabel("mt5t", 0, y, StringFormat("MT5 time: %s (GMT%+d)", TimeToString(srv_t, TIME_DATE|TIME_SECONDS), InpServerGMTOffset), InpPanelColor); y += line_h;
+   EnsureLabel("mnlt", 0, y, StringFormat("Manila  : %s (GMT+%d)", TimeToString(mnl_t, TIME_DATE|TIME_SECONDS), InpSessionGMTOffset), InpPanelColor); y += line_h;
 
    ENUM_BIAS bias = GetCachedHTFBias();
    color bclr = bias == BIAS_BULL ? InpPanelGoodClr : bias == BIAS_BEAR ? InpPanelBadClr : InpPanelMutedClr;
@@ -1271,9 +1337,18 @@ void DrawPanel()
 
    EnsureLabel("sess", 0, y, "Session : " + g_session_now, InpPanelColor); y += line_h;
 
+   double open_vol = 0.0;
+   for(int i = 0; i < ArraySize(g_trades); i++)
+      if(PositionSelectByTicket(g_trades[i].ticket)) open_vol += PositionGetDouble(POSITION_VOLUME);
    EnsureLabel("pos", 0, y,
-      StringFormat("Trades  : %d / %d active", ArraySize(g_trades), InpMaxPositions),
+      StringFormat("Trades  : %d / %d active (%.2f lots)", ArraySize(g_trades), InpMaxPositions, open_vol),
       InpPanelColor);
+   y += line_h;
+
+   string lots_str = InpUseFixedLots
+      ? StringFormat("Lots    : %.2f (fixed)", NormalizeLots(InpFixedLots))
+      : StringFormat("Lots    : %.1f%%/trade  ~%.2f @ $%.0f SL", InpRiskPercent, CalcLotsForRisk(InpMinSLClamp), InpMinSLClamp);
+   EnsureLabel("lots", 0, y, lots_str, InpPanelColor);
    y += line_h;
 
    color wrclr = decisive == 0 ? InpPanelMutedClr : (wr >= 0.5 ? InpPanelGoodClr : InpPanelBadClr);
@@ -1296,8 +1371,8 @@ void DrawPanel()
 //==================================================================//
 int OnInit(void)
 {
-   MLog("INIT", StringFormat("MigsHybrid v%s — Pine parity. Symbol=%s TF=%s",
-                              MIGS_VERSION, _Symbol, EnumToString((ENUM_TIMEFRAMES)_Period)));
+   MLog("INIT", StringFormat("BG-Golden-5m v%s — Pine parity. Symbol=%s TF=%s",
+                              BG_VERSION, _Symbol, EnumToString((ENUM_TIMEFRAMES)_Period)));
 
    if(!g_symbol.Name(_Symbol)) return INIT_FAILED;
 
@@ -1329,11 +1404,17 @@ int OnInit(void)
    RollDayIfNeeded();
    DrawPanel();
 
-   PrintFormat("Migs v%s ready. HTF=%s EMA %d/%d. Pivot len=%d. EntryATR=%.2f. SL buf=%.2f. MinSL($)=%.1f/%.1f. Cooldown=%dbars.",
-               MIGS_VERSION,
+   PrintFormat("BG v%s ready. HTF=%s EMA %d/%d. Pivot len=%d. EntryATR=%.2f. SL buf=%.2f. MinSL($)=%.1f/%.1f. Cooldown=%dbars.",
+               BG_VERSION,
                EnumToString(InpHTFTimeframe), InpHTFFastEMA, InpHTFSlowEMA,
                InpSwingLen, InpEntryATR, InpSLBufATR,
                InpMinSLFilter, InpMinSLClamp, InpCooldownBars);
+
+   int detected_srv_gmt = (int)MathRound((double)(TimeTradeServer() - TimeGMT()) / 3600.0);
+   PrintFormat("[BG] Server=%s | GMT=%s | detected server offset ~GMT%+d (live only; tester reads 0). InpServerGMTOffset=GMT%+d, sessions in GMT+%d.",
+               TimeToString(TimeTradeServer(), TIME_DATE|TIME_SECONDS),
+               TimeToString(TimeGMT(), TIME_DATE|TIME_SECONDS),
+               detected_srv_gmt, InpServerGMTOffset, InpSessionGMTOffset);
    return INIT_SUCCEEDED;
 }
 

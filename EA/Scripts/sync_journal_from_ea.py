@@ -1,7 +1,7 @@
 r"""
 sync_journal_from_ea.py — copy EA-written journal entries into project journal/
 
-The EA writes journal entries to MQL5\Files\Migs\journal\YYYY\MM\NNNN-*.md.
+The EA writes journal entries to MQL5\Files\BG\journal\YYYY\MM\NNNN-*.md.
 After a trading session (or on demand), run this to mirror them into the
 project's journal/ folder. Then run scripts/update_stats.py to refresh stats.
 
@@ -57,7 +57,7 @@ def main() -> int:
         print("[ERR] Could not auto-detect MT5 Files.", file=sys.stderr)
         return 2
 
-    src_journal = src_base / "Migs" / "journal"
+    src_journal = src_base / "BG" / "journal"
     if not src_journal.exists():
         print(f"[INFO] No EA journal found at {src_journal}; nothing to sync.")
         return 0
