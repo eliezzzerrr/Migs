@@ -164,8 +164,8 @@ Enable `InpUseTP3` / the move-SL toggles to reshape this exactly as the pine's T
    races can resolve differently.
 2. **Entry price** — Pine enters at bar close; MT5 enters at market on the next tick. Small slippage per entry.
 3. **Costs** — Pine ignores spread/commission/swap; MT5 books them.
-4. **SL broker-attached, TP managed internally** — so the position can ride past TP3 when
-   `InpMoveTP2AfterTP3` is on. If the EA disconnects, the position rides on its broker SL only.
+4. **SL and the final TP are both broker-attached** — so both exits fill server-side even if the
+   EA/PC disconnects. (Ride-past-TP3 mode is the exception: no fixed TP, the EA trails the SL up.)
 5. **TP detection** uses the last *closed* bar's H/L (entry is bar-gated too), so an intrabar TP
    touch is recognized one bar later than a live pine chart would show it. The broker SL still fires intrabar.
 6. **NY sessions** — the pine enables NY AM/Lunch/PM with all weekdays off (idle); the EA keeps

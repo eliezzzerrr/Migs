@@ -6,6 +6,12 @@
 //|  Goal: ≥95% backtest agreement with TradingView indicator.         |
 //|                                                                    |
 //|  CHANGELOG                                                          |
+//|   v0.8.1 (2026-06-03)                                              |
+//|     • Hard broker TP at the final target (TP2 by default) — the    |
+//|       take-profit now lives server-side and fills even if the EA   |
+//|       or PC is offline. Ride-past-TP3 mode keeps TP=0 (trails SL). |
+//|     • Close handler attributes a broker-side exit to TP vs SL by   |
+//|       close price, so an intratick TP fill is booked as a win.     |
 //|   v0.8.0 (2026-06-02)                                              |
 //|     • Renamed to BG-Golden-Signal-5m.mq5; full BG rebrand          |
 //|       (copyright, panel, struct, logs, journal dir, strategy tag). |
@@ -51,9 +57,9 @@
 //|   2. Pine entry = bar close. MT5 entry = market Ask/Bid at the     |
 //|      next-bar open. Small slippage on every entry.                 |
 //|   3. Spread/commission/swap — Pine doesn't model. MT5 does.        |
-//|   4. SL is broker-attached for safety. TP is internally tracked    |
-//|      so we can ride past TP3 when i_move_tp2 is enabled.           |
-//|      → If EA disconnects, position rides on SL only.               |
+//|   4. SL AND the final TP are broker-attached, so both exits fill   |
+//|      server-side even if the EA/PC disconnects. (Ride-past-TP3     |
+//|      mode is the exception: no fixed TP, the EA trails the SL up.) |
 //|                                                                    |
 //|  RIGHT-FIRST-TIME CHECKLIST                                        |
 //|   [✓] No #property strict                                          |
@@ -70,8 +76,8 @@
 //|   [✓] IsNewBar() gate around bar-close logic                        |
 //+------------------------------------------------------------------+
 #property copyright "BG"
-#property version   "0.80"
-#property description "BG Golden 5m v0.8 — Pine-parity build matching BG-Golden-Signal-5m.pine."
+#property version   "0.81"
+#property description "BG Golden 5m v0.8.1 — Pine-parity build matching BG-Golden-Signal-5m.pine."
 
 //==================================================================//
 //  INCLUDES                                                          //
@@ -180,7 +186,7 @@ input color            InpPanelWarnClr     = clrDarkOrange;
 //==================================================================//
 //  CONSTANTS                                                         //
 //==================================================================//
-#define BG_VERSION           "0.7.0"
+#define BG_VERSION           "0.8.1"
 #define PANEL_PREFIX           "BGStatus_"
 #define MAX_BARS_FETCH         500    // hard cap on CopyHigh/Low/Close lookback
 #define HTF_BIAS_CACHE_SECS    60     // re-evaluate HTF bias at this cadence
@@ -804,9 +810,11 @@ bool IsNewBar()
 //==================================================================//
 //  TRADE EXECUTION                                                   //
 //                                                                    //
-//  Single-position-per-trade (no thirds). Broker SL attached for     //
-//  safety. TP MANAGED INTERNALLY — we don't attach TP to broker so   //
-//  we can ride past TP3 when i_move_tp2 is enabled.                  //
+//  Single-position-per-trade (no thirds). Broker SL AND a broker TP   //
+//  at the final target (TP2 by default) are attached, so both exits   //
+//  fill server-side even if the EA/PC is offline. The EA still tracks //
+//  TPs internally for trailing. Ride-past-TP3 mode sets no broker TP  //
+//  (it trails the SL up instead).                                     //
 //==================================================================//
 bool OpenTrade(const SetupCandidate &s)
 {
@@ -820,12 +828,21 @@ bool OpenTrade(const SetupCandidate &s)
    g_trade.SetTypeFillingBySymbol(_Symbol);
 
    string cmt = StringFormat("BG:%s", s.direction == DIR_BUY ? "buy" : "sell");
+
+   // Hard broker TP at the FINAL target so the take-profit always lives on the
+   // server (fills even if the EA/PC is offline). Mirrors the tp*_is_final
+   // logic. Ride-past-TP3 mode (UseTP3 + MoveTP2AfterTP3) has no fixed final
+   // TP, so it stays 0 and the EA trails the SL up instead.
+   double broker_tp = 0.0;
+   if(InpUseTP3 && !InpMoveTP2AfterTP3)      broker_tp = s.tp3;   // TP3 final
+   else if(!InpUseTP3 && InpUseTP2)          broker_tp = s.tp2;   // TP2 final (default)
+   else if(!InpUseTP3 && !InpUseTP2)         broker_tp = s.tp1;   // TP1 final
+
    bool ok = false;
-   // SL attached, TP=0 (managed internally)
    if(s.direction == DIR_BUY)
-      ok = g_trade.Buy (lots, _Symbol, s.entry, s.sl_final, 0.0, cmt);
+      ok = g_trade.Buy (lots, _Symbol, s.entry, s.sl_final, broker_tp, cmt);
    else
-      ok = g_trade.Sell(lots, _Symbol, s.entry, s.sl_final, 0.0, cmt);
+      ok = g_trade.Sell(lots, _Symbol, s.entry, s.sl_final, broker_tp, cmt);
 
    uint retcode = g_trade.ResultRetcode();
    if(!ok || retcode != TRADE_RETCODE_DONE)
@@ -907,6 +924,41 @@ void RemoveTradeAtIndex(const int idx)
 //  against the bar that closed before it moved).                     //
 //==================================================================//
 
+// --- Attribution helpers: when the position vanished between ticks (e.g. the
+//     hard broker TP filled intratick), decide whether it was a TP or an SL. ---
+
+// Price of the position's closing (OUT) deal from history; 0 if not found.
+double ClosedPositionPrice(const ulong pos_ticket)
+{
+   if(!HistorySelectByPosition(pos_ticket)) return 0.0;
+   double price = 0.0;
+   int n = HistoryDealsTotal();
+   for(int i = n - 1; i >= 0; i--)
+   {
+      ulong d = HistoryDealGetTicket(i);
+      if(d == 0) continue;
+      if(HistoryDealGetInteger(d, DEAL_ENTRY) == DEAL_ENTRY_OUT)
+      { price = HistoryDealGetDouble(d, DEAL_PRICE); break; }
+   }
+   return price;
+}
+
+// Final TP price / R for the current config (mirrors tp*_is_final).
+// Returns 0 for ride-past-TP3 mode (no fixed final TP).
+double FinalTPPrice(const int idx)
+{
+   if(InpUseTP3 && !InpMoveTP2AfterTP3) return g_trades[idx].tp3;
+   if(!InpUseTP3 && InpUseTP2)          return g_trades[idx].tp2;
+   if(!InpUseTP3 && !InpUseTP2)         return g_trades[idx].tp1;
+   return 0.0;
+}
+double FinalTPR()
+{
+   if(InpUseTP3 && !InpMoveTP2AfterTP3) return 3.0;
+   if(!InpUseTP3 && InpUseTP2)          return 2.0;
+   return 1.0;
+}
+
 // Process one open trade. Returns true if the trade was closed (and removed
 // from g_trades) inside this call.
 bool ProcessOneTrade(const int idx, const double bar_high, const double bar_low,
@@ -981,12 +1033,26 @@ bool ProcessOneTrade(const int idx, const double bar_high, const double bar_low,
       }
    }
 
-   // ----- SL: broker may have already filled -----
+   // ----- Position closed by the broker: the hard TP or the SL. -----
    if(!PositionSelectByTicket(g_trades[idx].ticket))
    {
-      double r = g_trades[idx].eff_sl_r;
-      bool was_win = (r >= 0.0);   // SL-while-trailed counts as WIN
-      FinalizeClosedTrade(idx, r, was_win, was_win ? "SL_TRAILED" : "SL");
+      double r; bool was_win; string reason;
+      double final_tp = FinalTPPrice(idx);
+      double cp       = ClosedPositionPrice(g_trades[idx].ticket);
+      double tol      = 20 * _Point;
+      bool hit_tp = (final_tp > 0.0) &&
+                    (is_long ? (cp >= final_tp - tol) : (cp <= final_tp + tol));
+      if(hit_tp)
+      {
+         r = FinalTPR(); was_win = true; reason = "TP";          // broker TP filled
+      }
+      else
+      {
+         r = g_trades[idx].eff_sl_r;     // -1 raw, or 0/+1/+2 if SL was trailed
+         was_win = (r >= 0.0);           // SL-while-trailed counts as a win
+         reason = was_win ? "SL_TRAILED" : "SL";
+      }
+      FinalizeClosedTrade(idx, r, was_win, reason);
       return true;
    }
 
