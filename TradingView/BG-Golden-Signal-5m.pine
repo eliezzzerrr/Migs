@@ -111,7 +111,7 @@ i_london_txt     = input.string("London",    "", inline="LONDON", group=g_sess)
 i_london_sess    = input.session("1400-1700", "", inline="LONDON", group=g_sess)
 i_london_color   = input.color(color.red,    "", inline="LONDON", group=g_sess)
 i_london_dow_mon = input.bool(true, "Mon", inline="LONDON_DOW", group=g_sess,
-     tooltip="Per-session day-of-week filter for the London killzone. Tick days when London is ALLOWED to open new trades; untick days when London should be SKIPPED. Use this to block the 2 losing London weekdays while keeping the 3 profitable ones. Defaults: all 7 days unticked (London disabled by weekday — re-enable per day as needed). Weekday timezone: Asia/Manila.")
+     tooltip="Per-session day-of-week filter for the London killzone. Tick days when London is ALLOWED to open new trades; untick days when London should be SKIPPED. Use this to keep only London's profitable weekdays. Default: Mon + Wed enabled (the validated winning days); Tue/Thu/Fri off. Adjust per your own day analysis. Weekday timezone: Asia/Manila.")
 i_london_dow_tue = input.bool(false, "Tue", inline="LONDON_DOW", group=g_sess)
 i_london_dow_wed = input.bool(true, "Wed", inline="LONDON_DOW", group=g_sess)
 i_london_dow_thu = input.bool(false, "Thu", inline="LONDON_DOW", group=g_sess)
