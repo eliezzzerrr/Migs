@@ -1,0 +1,675 @@
+=== PAGE 1 ===
+Assessing the proﬁtability of intraday opening range breakout
+strategies∗
+Ulf Holmberg, Carl L¨onnbark, Christian Lundstr¨om
+Department of Economics
+Ume˚a School of Business and Economics
+Ume˚a University
+SE-901 87 Ume˚a
+Abstract
+Is it possible to beat the market by mechanical trading rules based on historical and publicly
+known information? Such rules have long been used by investors and in this paper, we test
+the success rate of trades and proﬁtability of the Open Range Breakout (ORB) strategy. An
+investor that trades on the ORB strategy seeks to identify large intraday price movements
+and trades only when the price moves beyond some predetermined threshold. We present
+an ORB strategy based on normally distributed returns to identify such days and ﬁnd that
+our ORB trading strategy result in signiﬁcantly higher returns than zero as well as an
+increased success rate in relation to a fair game. The characteristics of such an approach
+over conventional statistical tests is that it involves the joint distribution of Low, High, Open
+and Close over a given time horizon.
+Keywords: Bootstrap, Crude oil futures, Contraction-Expansion principle, Eﬃcient market
+hypothesis, Martingales, Technical Analysis.
+JEL classiﬁcation: C49, G11, G14, G17.
+∗The second author gratefully acknowledges the ﬁnancial support from the Wallander foundation. We thank
+Kurt Br¨ann¨as and Tomas Sj¨ogren for insightful comments and suggestions.
+
+=== PAGE 2 ===
+1
+Introduction
+The Eﬃcient Market Hypothesis (EMH) of Fama (1965, 1970) asserts that current asset prices
+fully reﬂect available information (see also Fama, 1991) implying that asset prices evolve as
+random walks in time. Consequently, tests of the EMH have traditionally been designed to
+catch deviations from random walk prices and in the massive literature on the subject one
+is bound to ﬁnd support for both acceptances and rejections of the hypothesis (e.g., Malkiel,
+1996; Lo, 2001). In particular, an assertion of the EMH is that it should not be possible to
+base a trading strategy on historical prices (so-called ﬁlter rules or technical trading) and earn
+positive expected returns. However, the fact remains that the use of ﬁlter rules is a widespread
+phenomenon.
+Barclay Hedge estimates that ﬁlter based Hedge Funds within the Managed
+Futures category manage over 300 Billion USD in 2011 and is today the largest hedge fund
+category with respect to assets under management.
+Indeed, some ﬁlter rule traders appear
+to consistently outperform the market (see Schwager, 1989, for a classic reference) and the
+subject has been given due attention in the literature (e.g. Brock, Lakonishok, and LeBaron,
+1992; Gen¸cay, 1996, 1998). Testing of the proﬁtability of trading rules has traditionally been
+carried out based on a (at least) daily investment horizon. However, as discussed in Taylor and
+Allen (1992) the use of ﬁlter rules among practitioners appears to increase with the frequency
+of trading (see also Schulmeister, 2009). In particular, many strategies are typically employed
+intraday and to assess their potential proﬁtability one would typically require intraday data.
+The relative unavailability of intraday data may thus be a possible explanation for the apparent
+lagging behind of the research community.
+In this paper we remove this obstacle and propose a quite novel approach on how to assess
+the proﬁtability when only records of daily high, low, opening and close are available. Obviously,
+there is a plethora of ﬁlter rules out there and the one we have in mind in the present paper is
+the so-called opening range breakout (ORB), which is typically adopted intraday. This rule is
+based on the premise that if the market moves a certain percentage from the opening price level,
+the odds favor a continuation of that move. An ORB ﬁlter suggests that, long (short) positions
+are established at some predetermined price threshold a certain percentage above (below) the
+opening price.
+1
+
+=== PAGE 3 ===
+To evoke the testing strategy and gain intuition on the way we ﬁrst note that the rationale
+behind using an ORB ﬁlter is the believe in so-called momentum in prices (e.g. Jegadeesh and
+Titman, 1993). That is, the tendency for rising asset prices to rise further and falling prices to
+keep falling. In the behavioral ﬁnance literature the appearance of momentum is often attributed
+to cognitive biases from irrational investors such as investor herding, investor over- and under
+reaction, and conﬁrmation bias (see Barberis et al., 1998; Daniel et al., 1998). However, as
+discussed in Crombez (2001) momentum can also be observed with perfectly rational traders.
+In pioneering the ORB strategy Crabel (1990) presented the so-called Contraction-Expansion
+(C-E) principle. The principle asserts that markets alternates between regimes of contraction
+and expansion, or, periods of modest and large price movements, respectively. An ORB strategy
+may be viewed as a strategy of identifying and proﬁting from days of expansion. In passing we
+note the resemblance with the stylized fact of volatility clustering in ﬁnancial return series (e.g.
+Engle, 1982).
+Now, a seemingly quite reasonable assumption is that markets for the most part are relatively
+eﬃcient with prices evolving as random walks in time, or equivalently, returns are martingales.
+Thus, a heuristic use of the law of large number implies normally distributed returns. According
+to the (C-E) principle these calm days could be considered as periods of contraction during
+which the returns are normally distributed. Now, during periods of expansions traders activates
+ORB strategies and the proﬁtability of them implies that the martingale property breaks down
+with non-normality as a consequence. Building on this reasoning our testing strategy is simply
+based on identifying days of large intraday movements and evaluating the expected return on
+these days. In particular, if on a given day the price threshold implied by the rule is above
+(below) the high (low) price we deduce that a long (short) position was established at some
+point during this day. To assess statistical signiﬁcance we build on Brock et al. (1992) and use
+a bootstrap approach adapted to the present case.
+The remainder of the paper is organized as follows.
+In Section 2 we brieﬂy review the
+underlying theory and give an account of the ORB strategy. In this section we also outline
+our proposed test for proﬁtability. Section 3 gives results for the empirical application and the
+fourth section concludes.
+2
+
+=== PAGE 4 ===
+2
+Martingale prices and momentum based trading strategies
+We denote by P o
+t ,P h
+t , P l
+t and P c
+t the opening, high, low and, closing price on day t, respectively.
+A point in time on day t is given by t+δ, 0 ≤δ ≤1. Note that P o
+t = Pt and P c
+t = Pt+1. The set
+Ψt+δ contains the information available at time t + δ. Furthermore, let ψu (ψl) denote a certain
+threshold price level that is such that if the price crosses it from below (above) a momentum
+investor acts, i.e. takes a long (short) position. For ORB investors, these threshold price are
+often set in terms of some pre-determined (large) relative change, ρ, from the opening price
+such that ψu
+t = (1 + ρ)P o
+t and ψl
+t = (1 −ρ)P o
+t . For the purpose of this paper we assume that
+all positions are closed at the end of the trading day. Hence, no type of money management
+techniques such as a stop loss, trailing loss, proﬁt stop are considered.
+Within the context of the present paper it is natural to involve the martingale pricing model
+(MPT) of Samuelson (1965). If capital markets are eﬃcient with respect to Ψt+δ some pre-
+scribed formula based on Ψt+δ should not result in systematic success implying that prices are
+martingales with respect to this information set. In particular,
+E[P c
+t |Ψt+δ] = Pt+δ.
+A direct consequence of martingale pricing is that any investment should earn a zero expected
+return
+E[Rc
+t+δ|Ψt+δ] = 0,
+where Rc
+t+δ = log (P c
+t /Pt+δ). As such, any investment within the MPT framework is a “fair
+game” and from the martingale central limit theorem it follows that the returns are normally
+distributed (Brown, 1971).
+Now, momentum investments are based on the premise that, if the market moves a certain
+percentage from the opening price level, the odds favor a continuation of that move.
+More
+speciﬁcally, a proﬁtable momentum based trading strategy implies that
+E[P c
+t |Pt+δ > ψu
+t ] > Pt+δ and/or E[P c
+t |Pt+δ < ψl
+t] < Pt+δ.
+3
+
+=== PAGE 5 ===
+∆
+Pt"∆
+Ψt
+l
+Ψt
+u
+Pt
+c
+Pt
+o
+Figure 1: An ORB strategy trader enters a long position if the intraday price exceeds ψu
+t .
+As such, the breaking down of the martingale property implies that the martingale central limit
+theorem no longer applies. Thus, it is natural to deﬁne ρ as a daily return that is unlikely to
+occur given normally distributed returns
+ρα = ˆµ + ˆσqα,
+(1)
+where ˆµ and ˆσ are estimates of the mean and standard deviation of Rc
+t = log (P c
+t /P o
+t ), respec-
+tively, and qα the inverse of the standard normal cumulative distribution function evaluated at
+α. Figure 1 illustrates a proﬁtable intraday trade based an ORB strategy. The price opens
+at P o
+t and as long as the price stays within “normal bounds”, i.e. within (ψu
+t , ψl
+t), the trader
+refrains from action but as soon as Pt+δ = ψu
+t , the trader initiates a long position, anticipating
+a continuation of the price moving in the same direction.
+Given that an ORB strategy is based on intraday price movements, as illustrated in Figure
+1, it is clear that a perfect test of proﬁtability requires information on the intraday price paths.
+The challenge we take on here is that of designing a test with access only to records of daily
+opening, high, low and closing prices. Our basic observation is that if the daily high (low) is
+higher (lower) than the set ψu
+t (ψl
+t), we know with certainty that a buy (sell) signal was triggered
+at some point during the day and that a position was initiated at ψu
+t (ψl
+t). For the purpose of
+this paper we assume a perfect order ﬁll at the threshold price, a zero bid ask spread, as well as
+4
+
+=== PAGE 6 ===
+zero commissions. Consequently, real-life trading produce slightly diﬀerent results.
+Upon deﬁning the return series Rlong
+t
+= log (P c
+t /ψu
+t ) and Rshort
+t
+= log
+!
+P c
+t /ψl
+t
+"
+we may con-
+sider the averages
+¯Rlong
+=
+# 1(P h
+t > ψu)Rlong
+t
+# 1(P h
+t > ψu)
+,
+¯Rshort
+=
+−
+# 1(P l
+t < ψl)Rshort
+t
+# 1(P l
+t < ψl)
+,
+where 1(·) is the indicator function. If strategies based on ORB ﬁlters are proﬁtable then ¯Rlong
+and ¯Rshort should be signiﬁcantly larger than zero. To assess statistical signiﬁcance we rely on
+the bootstrap approach suggested in Brock et al. (1992). Here, we face additional challenges
+compared to their work as the case at hand is multivariate with a natural ordering of the level
+series. A reasonable procedure that accommodates this restriction proceeds as follows.
+Assume that the level series share a common trend (cf. co-integration). Hence, considering
+a “benchmark” series to bootstrap the general levels appears reasonable. The other series may
+then be obtained as bootstrapped deviations from the benchmark series. To this end we consider
+the daily opening price as the benchmark series and deﬁne Ro
+t = log(P o
+t /P o
+t−1), t = 2, .., T. Also
+deﬁne deviations Ri
+t = log(P i
+t /P o
+t ) for i = {h, l, c} and t = 1, .., T. Collect these returns in
+Rt = (Ro
+t, Rh
+t , Rl
+t, Rc
+t) are then drawn randomly with replacement, generating an pseudo-sample
+of returns. Based on this sample, an alternative realization of the level series is then generated.
+This procedure is repeated N times to generate sampling distributions of ¯Rlong and ¯Rshort
+respectively. The sampling distributions are then used in the standard way to test the null of
+zero expected returns against the alternative of positive ones.
+3
+Application
+We apply the testing strategy presented above to a time series of U.S. crude oil futures prices
+obtained from Commodity Systems Inc covering the period March 30, 1983 to January 26, 2011.
+When constructing the time series the switch from the near-by contract to the next typically
+occur around the 20th each month, one month prior to the expiration month (see Pelletier, 1997,
+5
+
+=== PAGE 7 ===
+Open price
+19830330
+19900309
+19970219
+20040213
+20110126
+50
+75
+100
+125
+150
+175
+Figure 2: The evolution of the daily open price for U.S. crude oil futures adjusted for roll-over
+eﬀects from March 30, 1983 to January 26, 2011. Source: Commodity Systems Inc.
+Table 1: Descriptives of the daily return series.
+Obs.
+Mean
+Std.Dev
+Min
+Max
+Skewness
+Kurtosis
+Jarque-Bera
+6976
+0.02
+0.72
+-6.06
+9.90
+0.16
+10.26
+30668
+for details on the adjustment of roll-over eﬀects). Commodity futures are as easily sold short
+as bought long, and are not subject to short-selling restrictions while the costs associated with
+trading (e.g. slippage, bid ask spreads, and commissions) are often relatively low. In Figure
+2 we plot the evolution of the level series. The series exhibit a cyclical pattern and follows a
+positive long run trend reasonably due to inﬂation. Notable is also the sharp drop during the
+2008 sub-prime crisis.
+In Table 1 we give some descriptives for the daily returns series, i.e. Rc
+t. The series exhibit
+positive skewness and excess kurtosis and consequently the Jarque-Bera test strongly rejects
+normality.
+The values of the ρ’s (and consequently the treshold prices) are derived from the sample.
+We thus check ex post for the existence of intraday trending of oil futures prices.
+As can be read in Table 2, the ORB strategy results in signiﬁcant positive average returns
+suggesting that the “fair game” argument embedded in the Martingale pricing theory does
+not hold true for adverse price movements. Interestingly, as we tighten the criterion used to
+determine entry, i.e. if we move further down the tail of a normal distribution, both the success
+rate and average returns increase. Figure 3 clariﬁes this relationship. However, it should be
+6
+
+=== PAGE 8 ===
+Table 2: Empirical results. The α is the tail probability, and ρ gives the associated percentage
+return. N is the number of trades. freq gives the proportion of trades that result in positive
+returns, while ¯R gives the average returns.
+Long
+Short
+α
+ρ
+N
+freq.
+Rlong
+p
+ρ
+N
+freq.
+¯Rshort
+p
+10%
+0.9388
+738
+0.6057
+0.2019
+0.0000
+-0.9013
+826
+0.5424
+0.1439
+0.0000
+5%
+1.1996
+439
+0.6036
+0.2180
+0.0000
+-1.1621
+497
+0.5714
+0.1784
+0.0000
+full sample
+1%
+1.6889
+188
+0.6117
+0.2583
+0.0001
+-1.6513
+224
+0.6205
+0.2442
+0.0003
+0.5%
+1.8680
+141
+0.6028
+0.3108
+0.0002
+-1.8304
+172
+0.6454
+0.2527
+0.0008
+0.1%
+2.2373
+80
+0.7125
+0.4027
+0.0010
+-2.1997
+98
+0.6225
+0.2489
+0.0147
+α
+ρ
+N
+freq.
+Rlong
+p
+ρ
+N
+freq.
+¯Rshort
+p
+10%
+0.7840
+260
+0.4923
+0.0334
+0.2539
+-0.7574
+272
+0.5368
+0.0871
+0.0430
+1983-03-30
+5%
+1.0024
+159
+0.5157
+0.0711
+0.1350
+-0.9759
+156
+0.5192
+0.1313
+0.0401
+to
+1%
+1.4122
+72
+0.4861
+0.1140
+0.1246
+-1.3857
+73
+0.5753
+0.1978
+0.0563
+1992-06-29
+0.5%
+1.5623
+57
+0.4912
+0.0799
+0.2467
+-1.5357
+56
+0.5893
+0.2420
+0.0494
+0.1%
+1.8716
+33
+0.5758
+0.1656
+0.1448
+-1.8451
+41
+0.6342
+0.1026
+0.2859
+α
+ρ
+N
+freq.
+Rlong
+p
+ρ
+N
+freq.
+¯Rshort
+p
+10%
+0.6069
+373
+0.5657
+0.0374
+0.0357
+-0.5947
+371
+0.5148
+0.0307
+0.0734
+1992-06-30
+5%
+0.7772
+195
+0.5795
+0.0634
+0.0196
+-0.7650
+214
+0.5327
+0.0228
+0.2172
+to
+1%
+1.0966
+62
+0.5807
+0.0843
+0.0357
+-1.0845
+79
+0.5317
+-0.0258
+0.6814
+2001-10-11
+0.5%
+1.2136
+53
+0.3962
+0.0068
+0.4546
+-1.2015
+57
+0.5790
+-0.0608
+0.8091
+0.1%
+1.4548
+20
+0.5000
+0.0254
+0.4061
+-1.4426
+27
+0.3333
+-0.0290
+0.6420
+α
+ρ
+N
+freq.
+Rlong
+p
+ρ
+N
+freq.
+¯Rshort
+p
+10%
+1.2956
+245
+0.6612
+0.2813
+0.0000
+-1.2216
+300
+0.5967
+0.2483
+0.0000
+2001-10-12
+5%
+1.6524
+138
+0.6522
+0.3405
+0.0004
+-1.5784
+177
+0.6328
+0.2734
+0.0001
+to
+1%
+2.3216
+50
+0.8000
+0.5155
+0.0063
+-2.2477
+64
+0.6406
+0.3879
+0.0006
+2011-01-26
+0.5%
+2.5667
+44
+0.7500
+0.4926
+0.0062
+-2.4927
+48
+0.6667
+0.3892
+0.0008
+0.1%
+3.0718
+23
+0.8261
+0.6397
+0.0096
+-2.9979
+28
+0.7143
+0.3763
+0.0054
+noted that by moving down the tail of the normal distribution, we also reduce the number of
+trades, reducing the investors potential proﬁts.
+Dividing the full data set into three sub-samples, 1983-03-30 to 1992-06-29, 1992-06-30 to
+2001-10-11, and ﬁnally 2001-10-12 to 2011-01-26 we ﬁnd that the most recent time period drives
+the result. Given the possible resemblance between the ORB strategy and the stylized fact of
+volatility clustering in ﬁnancial returns series, one plausible explanation is the relatively high
+volatility in the 2001-10-12 to 2011-01-26 period. After all, ORB is a directional strategy in the
+sense that either a long or a short position is established and hence it is basically long volatility
+in contrast to hedge fund strategies such as Long Short Equity, Market Neutral strategies or dif-
+ferent variants of Arbitrage strategies to mention a few. Market volatility and ORB proﬁtability
+should be expected to go hand in hand.
+7
+
+=== PAGE 9 ===
+
+Average return
+0.000
+0.025
+0.050
+0.075
+0.100
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+Long
+Short
+Figure 3: Average returns on the tail probability (α).
+4
+Concluding discussion
+We proposed a way of assessing the proﬁtability of intraday ORB strategies when long records of
+daily opening, high, low and closing prices are available. In an empirical application we employ
+our testing strategy to U.S. crude oil futures. Using the full sample we ﬁnd a remarkable success
+of the of ORB strategies. However, splitting up the full sample into three sub-periods reveals
+that this ﬁnding is not robust to time and to a large extent explained by the most recent (and
+most volatile) period. In this sense, our results relate to the ﬁndings in Gen¸cay (1998), that
+mechanical trading rules tend to result in higher proﬁts when markets “trend” or in times of
+high volatility.
+A point to note is that our testing strategy will underestimate the actual proﬁts since the
+closing of the positions is assumed to occur at the daily close. Thus, days when the momentum
+does not carry through to the end of the day or even reverses intraday will be included. In
+practice, the losses on these days will be limited by so-called stop losses.
+Notable is also the our ﬁlter results in relatively few trades, which restricts potential proﬁts.
+Most likely though the orb trader simultaneously monitors and acts on several markets.
+Admittedly, transaction costs in terms of commission fees and bid-ask spreads will consume
+some of the proﬁts. However, for the market under consideration these are relatively small. A
+reasonable estimate is 0.04%, or 0.08% round trip.
+8
+
+=== PAGE 10 ===
+References
+Barberis, N., A. Shleifer, and R. Vishny (1998): “A Model of Investor Sentiment,”
+Journal of Financial Economics, 49, 307–343.
+Brock, W., J. Lakonishok, and B. LeBaron (1992): “Simple Technical Trading Rules and
+the Stochastic Properties of Stock Returns,” Journal of Finance, 47, 1731–64.
+Brown, B. M. (1971): “Martingale Central Limit Theorems,” The Annals of Mathematical
+Statistics, 42, 59–66.
+Crabel, T. (1990): Day Trading With Short Term Price Patterns Day Trading With Short
+Term Price Patterns and Opening Range Breakout, Greenville, S.C. : Traders Press.
+Crombez, J. (2001): “Momentum, Rational Agents and Eﬃcient Markets,” Journal of Psy-
+chology and Financial Markets, 2, 190–200.
+Daniel, K., D. Hirshleifer, and A. Subrahmanyam (1998): “Investor Psychology and
+Security Market Under- and Overreactions,,” Journal of Finance, 53, 1839–1885.
+Engle, R. F. (1982): “Autoregressive Conditional Heteroscedasticity with Estimates of the
+Variance of United Kingdom Inﬂation,” Econometrica, 50.
+Fama, E. (1965): “The Behavior of Stock Market Prices,” Journal of Business, 38, 34–105.
+——— (1970): “Eﬃcient Capital Markets: A Review of Theory and Empirical Work,” The
+Journal of Finance, 25, 383–417.
+——— (1991): “Eﬃcient Capital Markets: II,” Journal of Finance, 46, 1575–617.
+Genc¸ay, R. (1996): “Non-linear Prediction of Security Returns with Moving Average Rules,”
+Journal of Forecasting, 15, 165–174.
+——— (1998): “The Predictability of Security Returns with Simple Technical Trading Rules,”
+Journal of Empirical Finance, 5, 347–359.
+Jegadeesh, N. and S. Titman (1993): “Returns to Buying Winners and Selling Losers:
+Implications for Stock Market Eﬃciency,” Journal of Finance, 48, 65–91.
+9
+
+=== PAGE 11 ===
+Lo, A. (2001): A Non-random Walk Down Wall Street, Princeton Paperbacks.
+Malkiel, B. G. (1996): A Random Walk Down Wall Street, W. W. Norton.
+Pelletier, B. (1997): “Computed Contracts: Their Meaning, Purpose and Application,” CSI
+Technical Journal, 13, 1–6.
+Samuelson, P. A. (1965): “Proof That Properly Anticipated Prices Fluctuate Randomly,”
+Industrial Management Review, 6, 41–49.
+Schulmeister, S. (2009): “Proﬁtability of technical stock trading: Has it moved from daily to
+intraday data?” Review of Financial Economics, 18, 190–201.
+Schwager, J. D. (1989): Market Wizards: Interviews with Top Traders, HarperCollins pub-
+lishers Inc.
+Taylor, M. P. and H. Allen (1992): “The Use of Technical Analysis in the Foreign Exchange
+Market,” Journal of International Money and Finance, 11, 304–314.
+10
