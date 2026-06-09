@@ -1,0 +1,45 @@
+// =====================================================================
+//  REFERENCE ONLY — NOT a script we run. Stored so pine-writer can read
+//  LuxAlgo's exact drawing STYLE (structure lines, BOS/CHoCH labels,
+//  order-block boxes) when restyling BG-computed levels.
+//
+//  We use ONLY the plotting style from this file. None of LuxAlgo's
+//  detection logic (their pivot/leg engine, OB store, FVG, zones) is
+//  imported into the BG script — BG keeps computing its own levels.
+//
+//  License: CC BY-NC-SA 4.0 — © LuxAlgo. Attribution retained per license.
+//  https://creativecommons.org/licenses/by-nc-sa/4.0/
+// =====================================================================
+// This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/
+// © LuxAlgo
+
+//@version=5
+indicator('Smart Money Concepts [LuxAlgo]', 'LuxAlgo - Smart Money Concepts', overlay = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
+
+// --- Key drawing functions to mirror (style only) ---
+
+// Structure line + BOS/CHoCH label:
+//   drawStructure(pivot p_ivot, string tag, color structureColor, string lineStyle, string labelStyle, string labelSize)
+//     l_ine  := line.new(chart.point.new(p_ivot.barTime,na,p_ivot.currentLevel),
+//                        chart.point.new(time,na,p_ivot.currentLevel),
+//                        xloc.bar_time, color=structureColor, style=lineStyle)
+//     l_abel := label.new(chart.point.new(na, math.round(0.5*(p_ivot.barIndex+bar_index)), p_ivot.currentLevel),
+//                         tag, xloc.bar_index, color=color(na), textcolor=structureColor,
+//                         style=labelStyle, size=labelSize)
+//   - Swing structure: line.style_solid, swing label size.
+//   - Internal structure: line.style_dashed, tiny label.
+//   - tag = trend.bias == opposite ? 'CHoCH' : 'BOS'  (CHoCH when the break flips the prior bias)
+//   - Bullish break: label.style_label_down (label sits above), bullish color.
+//   - Bearish break: label.style_label_up (label sits below), bearish color.
+
+// Order-block box:
+//   drawOrderBlocks() per block:
+//     b_ox.set_top_left_point(    chart.point.new(barTime, na, barHigh))
+//     b_ox.set_bottom_right_point(chart.point.new(last_bar_time, na, barLow))
+//     b_ox.set_border_color(internal ? na : orderBlockColor)
+//     b_ox.set_bgcolor(orderBlockColor)
+//   - Boxes extend to the right (extend.right) until mitigated, then deleted.
+//   - Bullish OB tint vs bearish OB tint, ~80 transparency.
+
+// (Full original LuxAlgo source intentionally summarized to the drawing
+//  primitives above — that is the only part we are reusing.)

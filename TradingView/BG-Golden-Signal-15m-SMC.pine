@@ -1,0 +1,2448 @@
+// =====================================================================
+//  BG Golden Signal 15m (SMC visuals) — TradingView Pine Script v6 (INDICATOR)
+//  DUPLICATE of BG-Golden-Signal-15m.pine. The original is preserved
+//  unchanged; this copy is where the LuxAlgo-style structure-line / OB-box
+//  visuals get added. Computation stays 100% BG — only the drawing look is
+//  borrowed (CC BY-NC-SA 4.0, © LuxAlgo; attribution retained).
+//  XAUUSD-tuned variant of the BG Signals family.
+//  15m-tuned variant. Validated 2026-05-26: London Tue-Fri 1400-1700 PHT, 18 trades, 72.2% WR, +21R. For 5m, use BG-Golden-Signal-5m.pine.
+//  Signal-only display. Buy/Sell labels + SL/TP lines + fill markers.
+//
+//  Strategy:
+//    1. M5 BOS (close beyond recent fractal swing)
+//    2. OB = last opposite-color candle before BOS impulse
+//    3. HTF (1H) bias agreement required
+//    4. Chop filter: strict H1 + ADX + BOS conflict + ATR squeeze
+//    5. Entry near OB (≤ ATR proximity)
+//    6. SL beyond OB ± buffer → defines 1R
+//    7. TP1/TP2/TP3 = entry ± 1R/2R/3R. TP2 and TP3 are optional via inputs;
+//       the highest enabled TP becomes the final exit (or rides past TP3 if
+//       i_move_tp2 is enabled).
+//    8. Optional SL trail chain: TP1→BE, TP2→TP1, TP3→TP2 (each independent).
+//
+//  Multi-position:
+//    `i_max_positions` controls how many concurrent sim trades the script
+//    will hold open. When > 1, each fresh setup that passes filters opens
+//    its own trade; aggregate stats (count, R, WR) accumulate across all.
+//    2nd+ positions require a distinct OB and must stack in the same
+//    direction (no simultaneous long+short).
+//    Visualization follows the MOST RECENTLY OPENED active trade only —
+//    older trades remain on the chart as their entry labels but their live
+//    SL/TP lines aren't tracked.
+// =====================================================================
+//@version=6
+
+indicator("BG Golden Signal 15m SMC",
+     overlay              = true,
+     max_lines_count      = 500,
+     max_labels_count     = 500,
+     max_boxes_count      = 500)
+
+// =====================================================================
+// INPUTS
+// =====================================================================
+g_struct    = "Structure Detection"
+i_swing_len = input.int(1,    "Swing pivot strength (bars L/R)", minval=1, group=g_struct,
+     tooltip="Bars needed on each side of a pivot to confirm it. Suggested by TF: 1m=3, 5m=2, 15m=2, 30m=2, 1H=2. Higher = fewer / cleaner swings. Lower = more sensitive (noisy on fast TFs).")
+i_bos_age   = input.int(20,   "Max BOS age (bars)",              minval=1, group=g_struct,
+     tooltip="How long a BOS stays \"active\" for setup hunting. Suggested by TF: 1m=150, 5m=30, 15m=20, 30m=15, 1H=10.")
+i_ob_age    = input.int(40,   "Max OB lookback (bars)",          minval=1, group=g_struct,
+     tooltip="How far back to scan for the OB candle. Suggested by TF: 1m=300, 5m=60, 15m=40, 30m=30, 1H=25.")
+i_entry_atr = input.float(0.4, "Entry proximity (× ATR)",        minval=0.0, step=0.1, group=g_struct,
+     tooltip="How close price must retrace to the OB edge to fire. 0 = price must touch OB exactly. Suggested by TF: 1m=0.3, 5m=0.5, 15m=0.7, 30m=0.7, 1H=0.7.")
+i_atr_per   = input.int(14,   "ATR period",                      minval=1, group=g_struct,
+     tooltip="Volatility smoothing for SL buffer and entry proximity. Suggested by TF: 1m=50, 5m=14, 15m=14, 30m=14, 1H=14.")
+i_sl_buf    = input.float(0.45, "SL buffer (× ATR beyond OB)",   minval=0.0, step=0.05, group=g_struct,
+     tooltip="Pads SL past the OB extreme to avoid wick stops. Suggested by TF: 1m=0.1, 5m=0.1, 15m=0.15, 30m=0.15, 1H=0.2.")
+i_min_sl    = input.float(9.0, "Min SL distance ($) — clamp",    minval=0.0, step=0.5, group=g_struct,
+     tooltip="CLAMP: if OB-derived SL would be tighter than this, push it out to meet the floor (trade still fires with the wider stop). 0 = disabled. Suggested for XAUUSD by TF: 1m=$5, 5m=$7, 15m=$10, 30m=$15, 1H=$25.")
+i_min_sl_flt = input.float(4.0, "Min SL filter ($) — reject",     minval=0.0, step=0.5, group=g_struct,
+     tooltip="FILTER: reject the trade entirely if the OB-derived SL distance is below this threshold (BEFORE the clamp is applied). 0 = disabled. Use this to skip setups whose natural OB is so small the trade would be all-spread. Different from the clamp above: filter SKIPS, clamp WIDENS. Suggested for XAUUSD by TF: 1m=$3, 5m=$5, 15m=$7, 30m=$10, 1H=$15.")
+
+g_htf       = "HTF Bias"
+i_req_h1    = input.bool(true,  "Require HTF Bias Agreement",    group=g_htf)
+i_strict_bias = input.bool(false, "Strict bias (block ranging)", group=g_htf, tooltip="When Require HTF Bias Agreement is ON: OFF (default) allows a trade when HTF bias agrees OR is ranging/neutral. ON requires STRICT agreement — only longs when HTF is bullish, only shorts when HTF is bearish; ranging is blocked. Targets setups that die at the bias change. Has no effect when Require HTF Bias Agreement is OFF.")
+i_h1_tf     = input.timeframe("60", "HTF timeframe",             group=g_htf)
+i_h1_fast   = input.int(12, "HTF fast EMA",                       minval=1, group=g_htf)
+i_h1_slow   = input.int(80, "HTF slow EMA",                       minval=1, group=g_htf)
+
+g_sim       = "Simulated Trades"
+i_sim_on    = input.bool(true,  "Track simulated trades",         group=g_sim)
+i_max_pos   = input.int(1, "Max simultaneous trades",             minval=1, maxval=10, group=g_sim,
+     tooltip="How many sim trades can be open concurrently. 1 = single-position (default, identical to old behavior). >1 lets fresh setups fire even while older trades are still running. Visualization follows the most recently opened active trade only. Suggested by TF: 1m=2-3, 5m=2, 15m=1-2, 30m=1, 1H=1.")
+i_use_tp2   = input.bool(true,  "Enable TP2 (2R)",                group=g_sim,
+     tooltip="Sets a +2R target. When TP2 is the highest enabled TP, the trade closes there for full +2R. When TP3 is also on, TP2 hit just acts as a trail trigger (no partial taken — full position rides to TP3).")
+i_use_tp3   = input.bool(false, "Enable TP3 (3R)",                group=g_sim,
+     tooltip="Sets a +3R target. When enabled, the trade rides to TP3 for full +3R win. Intermediate TPs (TP1, TP2) become trail triggers if their move-SL toggles are on.")
+i_move_be   = input.bool(false, "Move SL → BE after TP1",         group=g_sim,
+     tooltip="When TP1 fills, move SL to entry price.")
+i_move_tp1  = input.bool(false, "Move SL → TP1 after TP2",        group=g_sim,
+     tooltip="When TP2 fills, trail SL up to TP1 price (locks +1R). Requires TP2 enabled. Has no effect if TP2 is the final target.")
+i_move_be2  = input.bool(false, "Move SL → BE after TP2",         group=g_sim,
+     tooltip="When TP2 fills, move SL to entry price (break-even). Useful when you want TP2 to lock in BE instead of +1R — more room than the TP1 trail. Precedence: 'Move SL → TP1 after TP2' wins if both are checked (TP1 trail is the higher lock).")
+i_move_tp2  = input.bool(false, "Move SL → TP2 after TP3",        group=g_sim,
+     tooltip="When TP3 fills, trail SL up to TP2 price (locks +2R) instead of closing — lets the trade ride past TP3 until SL is hit. Requires TP3 enabled.")
+i_cooldown  = input.int(2, "Cooldown bars after sim close",       minval=0, group=g_sim,
+     tooltip="Bars to wait after the LAST sim trade fully closes before opening a new one. Only applies when no trades are active. Suggested by TF: 1m=30, 5m=6, 15m=4, 30m=3, 1H=2.")
+
+g_sess         = "Killzones / Session Filter"
+i_use_sessions = input.bool(true,  "Limit simulation to selected sessions", group=g_sess,
+     tooltip="When ON, the sim only OPENS new trades during ticked killzones. Existing trades resolve naturally. Untick all killzones (or untick this master) to allow all hours.")
+i_show_kz      = input.bool(false, "Show Killzone Boxes", inline="KZ_SHOW", group=g_sess)
+i_show_kz_txt  = input.bool(true,  "Display Text",        inline="KZ_SHOW", group=g_sess)
+i_kz_tz        = input.string("GMT+8", "Timezone",
+     options=['America/New_York','GMT-12','GMT-11','GMT-10','GMT-9','GMT-8','GMT-7','GMT-6','GMT-5','GMT-4','GMT-3','GMT-2','GMT-1','GMT+0','GMT+1','GMT+2','GMT+3','GMT+4','GMT+5','GMT+6','GMT+7','GMT+8','GMT+9','GMT+10','GMT+11','GMT+12','GMT+13','GMT+14'],
+     group=g_sess,
+     tooltip="All killzone times below are interpreted in this timezone. Default GMT+8 = PHT (Philippine Time, no DST). Switch to America/New_York if you want session times entered as NY local with DST auto-handled. NOTE: the default session times below are aligned to PHT during NY summer (EDT, Mar-Nov). During NY winter (EST, Nov-Mar) the actual NY sessions land 1 hour later in PHT — adjust the times by +1 hour, or switch the timezone to America/New_York for hands-off DST.")
+
+i_use_asia       = input.bool(true,  "", inline="ASIA",   group=g_sess)
+i_asia_txt       = input.string("Asia",      "", inline="ASIA",   group=g_sess)
+i_asia_sess      = input.session("0800-1200", "", inline="ASIA",  group=g_sess)
+i_asia_color     = input.color(color.blue,   "", inline="ASIA",   group=g_sess)
+i_asia_dow_mon   = input.bool(true, "Mon", inline="ASIA_DOW", group=g_sess,
+     tooltip="Per-session day-of-week filter for the Asia killzone. Tick days when Asia is ALLOWED to open new trades; untick days when Asia should be SKIPPED. Defaults: all 7 days ticked (no restriction). Existing trades that opened on an allowed day resolve naturally even if the next bar lands on a blocked day. Weekday timezone: Asia/Manila.")
+i_asia_dow_tue   = input.bool(true, "Tue", inline="ASIA_DOW", group=g_sess)
+i_asia_dow_wed   = input.bool(false, "Wed", inline="ASIA_DOW", group=g_sess)
+i_asia_dow_thu   = input.bool(true, "Thu", inline="ASIA_DOW", group=g_sess)
+i_asia_dow_fri   = input.bool(true, "Fri", inline="ASIA_DOW", group=g_sess)
+i_asia_dow_sat   = input.bool(false, "Sat", inline="ASIA_DOW", group=g_sess)
+i_asia_dow_sun   = input.bool(false, "Sun", inline="ASIA_DOW", group=g_sess)
+
+i_use_london     = input.bool(true,  "", inline="LONDON", group=g_sess)
+i_london_txt     = input.string("London",    "", inline="LONDON", group=g_sess)
+i_london_sess    = input.session("1400-1700", "", inline="LONDON", group=g_sess)
+i_london_color   = input.color(color.red,    "", inline="LONDON", group=g_sess)
+i_london_dow_mon = input.bool(false, "Mon", inline="LONDON_DOW", group=g_sess,
+     tooltip="Per-session day-of-week filter for the London killzone. Tick days when London is ALLOWED to open new trades; untick days when London should be SKIPPED. Use this to block the 2 losing London weekdays while keeping the 3 profitable ones. Defaults: all 7 days ticked (no restriction). Weekday timezone: Asia/Manila.")
+i_london_dow_tue = input.bool(true,  "Tue", inline="LONDON_DOW", group=g_sess)
+i_london_dow_wed = input.bool(true,  "Wed", inline="LONDON_DOW", group=g_sess)
+i_london_dow_thu = input.bool(true,  "Thu", inline="LONDON_DOW", group=g_sess)
+i_london_dow_fri = input.bool(true,  "Fri", inline="LONDON_DOW", group=g_sess)
+i_london_dow_sat = input.bool(false, "Sat", inline="LONDON_DOW", group=g_sess)
+i_london_dow_sun = input.bool(false, "Sun", inline="LONDON_DOW", group=g_sess)
+
+i_use_nyam       = input.bool(true, "", inline="NYAM",   group=g_sess)
+i_nyam_txt       = input.string("NY AM",     "", inline="NYAM",   group=g_sess)
+i_nyam_sess      = input.session("2130-2300", "", inline="NYAM",  group=g_sess)
+i_nyam_color     = input.color(#089981,      "", inline="NYAM",   group=g_sess)
+i_nyam_dow_mon   = input.bool(true, "Mon", inline="NYAM_DOW", group=g_sess,
+     tooltip="Per-session day-of-week filter for the NY AM killzone. Same semantics as the Asia/London filters: tick days when NY AM is ALLOWED to open new trades. Defaults: all 7 days ticked. Weekday timezone: Asia/Manila.")
+i_nyam_dow_tue   = input.bool(false, "Tue", inline="NYAM_DOW", group=g_sess)
+i_nyam_dow_wed   = input.bool(false, "Wed", inline="NYAM_DOW", group=g_sess)
+i_nyam_dow_thu   = input.bool(false, "Thu", inline="NYAM_DOW", group=g_sess)
+i_nyam_dow_fri   = input.bool(false, "Fri", inline="NYAM_DOW", group=g_sess)
+i_nyam_dow_sat   = input.bool(true, "Sat", inline="NYAM_DOW", group=g_sess)
+i_nyam_dow_sun   = input.bool(true, "Sun", inline="NYAM_DOW", group=g_sess)
+
+i_use_nylu       = input.bool(true, "", inline="NYLU",   group=g_sess)
+i_nylu_txt       = input.string("NY Lunch",  "", inline="NYLU",   group=g_sess)
+i_nylu_sess      = input.session("0000-0100", "", inline="NYLU",  group=g_sess)
+i_nylu_color     = input.color(color.yellow, "", inline="NYLU",   group=g_sess)
+i_nylu_dow_mon   = input.bool(false, "Mon", inline="NYLU_DOW", group=g_sess,
+     tooltip="Per-session day-of-week filter for the NY Lunch killzone. Same semantics as the Asia/London filters. Defaults: all 7 days ticked. Weekday timezone: Asia/Manila.")
+i_nylu_dow_tue   = input.bool(false, "Tue", inline="NYLU_DOW", group=g_sess)
+i_nylu_dow_wed   = input.bool(false, "Wed", inline="NYLU_DOW", group=g_sess)
+i_nylu_dow_thu   = input.bool(false, "Thu", inline="NYLU_DOW", group=g_sess)
+i_nylu_dow_fri   = input.bool(false, "Fri", inline="NYLU_DOW", group=g_sess)
+i_nylu_dow_sat   = input.bool(true, "Sat", inline="NYLU_DOW", group=g_sess)
+i_nylu_dow_sun   = input.bool(true, "Sun", inline="NYLU_DOW", group=g_sess)
+
+i_use_nypm       = input.bool(true, "", inline="NYPM",   group=g_sess)
+i_nypm_txt       = input.string("NY PM",     "", inline="NYPM",   group=g_sess)
+i_nypm_sess      = input.session("0130-0400", "", inline="NYPM",  group=g_sess)
+i_nypm_color     = input.color(color.purple, "", inline="NYPM",   group=g_sess)
+i_nypm_dow_mon   = input.bool(false, "Mon", inline="NYPM_DOW", group=g_sess,
+     tooltip="Per-session day-of-week filter for the NY PM killzone. Same semantics as the Asia/London filters. Defaults: all 7 days ticked. Weekday timezone: Asia/Manila.")
+i_nypm_dow_tue   = input.bool(false, "Tue", inline="NYPM_DOW", group=g_sess)
+i_nypm_dow_wed   = input.bool(true, "Wed", inline="NYPM_DOW", group=g_sess)
+i_nypm_dow_thu   = input.bool(false, "Thu", inline="NYPM_DOW", group=g_sess)
+i_nypm_dow_fri   = input.bool(false, "Fri", inline="NYPM_DOW", group=g_sess)
+i_nypm_dow_sat   = input.bool(true, "Sat", inline="NYPM_DOW", group=g_sess)
+i_nypm_dow_sun   = input.bool(true, "Sun", inline="NYPM_DOW", group=g_sess)
+
+i_box_trans    = input.int(70, "Box Transparency",  minval=0, maxval=100, group=g_sess)
+i_text_trans   = input.int(50, "Text Transparency", minval=0, maxval=100, group=g_sess)
+i_kz_max_days  = input.int(25, "Killzone history (sessions kept)", minval=1, group=g_sess,
+     tooltip="How many of the most recent killzone boxes to keep on the chart, per session. Older boxes are auto-pruned.")
+
+g_dates        = "Backtest Date Range"
+i_use_curweek  = input.bool(false, "Use current week (Mon 00:00 → next Mon 00:00 PHT)", group=g_dates,
+     tooltip="Tick to filter the sim to bars in the current ISO week (Asia/Manila). Self-activating — no need to tick anything else. Recomputed live, rolls every Monday midnight. Highest priority — overrides Month and custom.")
+i_use_curmonth = input.bool(false, "Use current month (1st 00:00 → next 1st 00:00 PHT)", group=g_dates,
+     tooltip="Tick to filter the sim to bars in the current calendar month (Asia/Manila). Self-activating. Recomputed live, rolls every 1st of the month. Overridden by 'Use current week' if that's also on.")
+i_use_last7    = input.bool(false, "Last 7 days",  group=g_dates,
+     tooltip="Rolling 7-day window ending now. Priority order across all filters: Week > Month > Last 7 > Last 14 > Last 30 > Last 60 > Custom. Shorter window wins when multiple are ticked.")
+i_use_last14   = input.bool(false, "Last 14 days", group=g_dates,
+     tooltip="Rolling 14-day window ending now.")
+i_use_last30   = input.bool(true,  "Last 30 days", group=g_dates,
+     tooltip="Rolling 30-day window ending now.")
+i_use_last60   = input.bool(false, "Last 60 days", group=g_dates,
+     tooltip="Rolling 60-day window ending now.")
+i_use_dates    = input.bool(false, "Use custom Start/End range", group=g_dates,
+     tooltip="Tick to activate the custom Start/End below. Ignored when Week, Month, or any Last-N-Days filter is on. Untick all to disable date filtering entirely.")
+i_date_from    = input.time(timestamp("2026-05-01 00:00 +0800"), "Start (custom)", group=g_dates,
+     tooltip="Effective only when 'Use custom Start/End range' is ON and all higher-priority filters (Week, Month, Last 7/14/30/60) are OFF. Default = 1st of last month (PHT). Static literal — does NOT auto-roll each month; use 'Use current month' for an auto-rolling window.")
+i_date_to      = input.time(timestamp("2026-05-31 23:59 +0800"), "End (custom)",   group=g_dates,
+     tooltip="Effective only when 'Use custom Start/End range' is ON and all higher-priority filters (Week, Month, Last 7/14/30/60) are OFF. Inclusive — bars at this exact timestamp qualify.")
+
+g_cost      = "Costs / Spread"
+i_spread    = input.float(0.0, "Spread ($/trade, round-trip)", step=0.1, minval=0.0, group=g_cost,
+     tooltip="Deducted from each closed trade. Default 0 = current spread-blind numbers. XAUUSD typical ~2-4. Feeds the Net R / Net $ / expectancy metrics; the structural Win/Loss COUNT is unchanged.")
+
+g_disp      = "Display"
+i_show_tbl  = input.bool(true,  "Show status table",              group=g_disp)
+i_tbl_pos   = input.string("top_right", "Table position",
+                           options=["top_left","top_right","middle_left","middle_right","bottom_left","bottom_right"], group=g_disp)
+i_lbl_off   = input.int(15, "Label offset (bars right)",          minval=1, group=g_disp)
+i_show_watch = input.bool(true, "Show potential entry (WATCH state)", group=g_disp,
+     tooltip="When the State is WATCH·BUY / WATCH·SELL, draw a dashed line + price label at the level the engine is waiting for (OB edge ± Entry-proximity×ATR). The setup fires when price reaches this level. Note: the trade still has to pass the Min-SL filter when it triggers.")
+i_show_breakdown = input.bool(true, "Show session/weekday R breakdown", group=g_disp,
+     tooltip="Optional panel attributing realized R and trade count to the session and the weekday each trade OPENED in (data-driven from the sim itself, no priors). Σ(session R)=Σ(weekday R)=gross Total R. Default OFF.")
+i_bd_pos    = input.string("bottom_left", "Breakdown panel position",
+                           options=["top_left","top_right","middle_left","middle_right","bottom_left","bottom_right"], group=g_disp)
+
+g_sug       = "Tuning Suggestions"
+i_show_sug  = input.bool(false,  "Show tuning suggestions panel",  group=g_sug,
+     tooltip="Shows a live comparison of your current settings vs. suggested values for the chosen Signal TF. Cells turn orange when your value differs from the suggestion, green when they match. Updates whenever you change Signal timeframe.")
+i_sug_pos   = input.string("bottom_right", "Suggestions panel position",
+                           options=["top_left","top_right","middle_left","middle_right","bottom_left","bottom_right"], group=g_sug)
+
+g_colors    = "Colors"
+i_col_buy   = input.color(color.new(#26a69a, 0),  "Buy / TP accent",  group=g_colors)
+i_col_sell  = input.color(color.new(#ef5350, 0),  "Sell / SL accent", group=g_colors)
+i_col_be    = input.color(color.new(#26c6da, 0),  "SL → BE color",    group=g_colors)
+i_col_text  = input.color(color.white, "Label text",                 group=g_colors)
+
+g_alert     = "Alerts"
+i_alerts_on   = input.bool(true,  "Enable alerts", group=g_alert,
+     tooltip="Fires via the alert() function. In TradingView, create ONE alert on this indicator with condition 'Any alert() function call' — it will deliver all the event types ticked below. Works on the free tier (1 alert).")
+i_alert_entry = input.bool(true,  "Alert on SETUP entry", group=g_alert,
+     tooltip="Fires the moment a trade opens (confirmed bar = the system's actual entry). This is the 'enter now, don't be late' alert.")
+i_alert_watch = input.bool(false, "Alert on WATCH (approaching)", group=g_alert,
+     tooltip="Heads-up when a setup is forming and price is nearing the trigger level. May not lead to an entry.")
+i_alert_exit  = input.bool(false, "Alert on TP / SL hit", group=g_alert,
+     tooltip="Notifies when an open trade hits a take-profit or stop.")
+
+g_acct      = "Account / Lot Sizing"
+i_lot       = input.float(0.01, "Lot size", step=0.01, minval=0.0, group=g_acct,
+     tooltip="Position size in lots. XAUUSD standard contract = 100 oz/lot, so 0.01 lot = $1 per 1.0 price-point move. Total $ / Day $ / Max DD scale with this.")
+i_contract  = input.float(100.0, "Contract size ($ per 1.0 point per 1.0 lot)", step=1.0, minval=0.0, group=g_acct,
+     tooltip="Dollar value of a 1.0 price move for a 1.0 lot. XAUUSD = 100 (100 oz/lot). Change only if your broker's gold contract differs.")
+
+// =====================================================================
+// SMC VISUALS (LuxAlgo-style, BG-driven)
+// Drawing STYLE only is adapted from "Smart Money Concepts [LuxAlgo]"
+// (© LuxAlgo, CC BY-NC-SA 4.0 — https://creativecommons.org/licenses/by-nc-sa/4.0/).
+// NONE of LuxAlgo's detection logic is used: every line / label / box
+// below is driven entirely by levels BG already computes on the chart
+// timeframe (last_sh / last_sl swing pivots, BOS events, and the BG OB).
+// All toggles default OFF so the +58R config looks unchanged out of box.
+// =====================================================================
+g_smc          = "SMC Visuals (LuxAlgo-style, BG-driven)"
+i_smc_on       = input.bool(false, "Enable SMC visuals (master)", group=g_smc,
+     tooltip="Master switch. When OFF (default) nothing in this group draws — the chart is identical to the original +58R config. Tick to enable structure lines and/or OB boxes below.")
+i_smc_struct   = input.bool(false, "Show structure lines + BOS/CHoCH labels", group=g_smc,
+     tooltip="On every BG BOS event, draws a LuxAlgo-style horizontal structure line at the broken swing (from the swing's bar to the break bar) plus a BOS / CHoCH label at the line midpoint. CHoCH = the break flips the prior structural bias. Requires the master toggle.")
+i_smc_obbox    = input.bool(false, "Show order-block boxes", group=g_smc,
+     tooltip="Draws a LuxAlgo-style colored zone box from BG's order block (formed on a BOS), extending right until price mitigates it. Tinted bull/bear per the OB type. Requires the master toggle.")
+i_smc_keep_ln  = input.int(20, "Structure lines kept (prune oldest)", minval=1, maxval=400, group=g_smc,
+     tooltip="Most-recent structure lines (and their labels) to keep. Older ones are deleted FIFO so the script never approaches the 500 line/label caps shared with the SL/TP lines and signal chips.")
+i_smc_keep_lbl = input.int(20, "Structure labels kept (prune oldest)", minval=1, maxval=400, group=g_smc,
+     tooltip="Most-recent BOS/CHoCH labels to keep. Usually equal to the line keep-count.")
+i_smc_keep_box = input.int(6, "OB boxes kept (prune oldest)", minval=1, maxval=200, group=g_smc,
+     tooltip="Most-recent OB boxes to keep. Pruned FIFO. Keep this modest: killzone boxes also draw from the shared 500-box budget. Default lowered to 6 so the chart is less busy out of the box; raise if you want more history.")
+i_smc_ob_dir   = input.string("Both", "OB direction filter", options=["Both","Demand only","Supply only"], group=g_smc,
+     tooltip="NOISE FILTER. Restrict which OB boxes draw by bias. 'Demand only' keeps bullish (demand) OBs and skips supply; 'Supply only' does the reverse; 'Both' (default) draws everything. Only affects OB boxes, never the signal/sim math.")
+i_smc_ob_bias_only = input.bool(false, "OB: HTF-bias-aligned only", group=g_smc,
+     tooltip="NOISE FILTER. When ON, only draw an OB box whose bias agrees with the CURRENT HTF (1H) bias at formation: demand OB only while H1 is bullish, supply OB only while H1 is bearish. Drops counter-trend OBs. Reuses the same h1_bull/h1_bear the engine already computes. Off by default.")
+i_smc_ob_min_atr = input.float(0.0, "OB: min size (× ATR)", minval=0.0, step=0.1, group=g_smc,
+     tooltip="NOISE FILTER. When > 0, skip drawing an OB box whose height (high − low) is smaller than this multiple of ATR at formation. Drops tiny/noisy boxes. 0 (default) = no size filter. Reuses the engine ATR; no extra series added.")
+i_smc_ob_extend_bars = input.int(0, "OB: cap right-extension (bars, 0=full)", minval=0, group=g_smc,
+     tooltip="When 0 (default) each OB box extends right across the chart until mitigated (current behavior). When > 0, cap the box's right edge to this many bars from its origin so old boxes don't span the whole screen. Mitigation still deletes the box early if price trades back through it.")
+i_smc_ob_active_only = input.bool(false, "OB: active-BOS only (prune aged)", group=g_smc,
+     tooltip="NOISE FILTER. When ON, an OB box is deleted once its originating BOS ages out (older than 'Max BOS age' bars), so only OBs from still-active structure remain. Off by default (boxes persist until mitigated or FIFO-pruned).")
+i_smc_ob_trans = input.int(80, "OB box transparency", minval=0, maxval=100, group=g_smc,
+     tooltip="Transparency of the OB box fill (LuxAlgo default ~80). 0 = opaque, 100 = invisible.")
+i_smc_col_bull = input.color(color.new(#26a69a, 0), "Structure/OB bull color (override)", group=g_smc,
+     tooltip="Color for bullish structure lines/labels and demand OB boxes. Defaults to the Buy accent; change to override independently of the signal colors.")
+i_smc_col_bear = input.color(color.new(#ef5350, 0), "Structure/OB bear color (override)", group=g_smc,
+     tooltip="Color for bearish structure lines/labels and supply OB boxes. Defaults to the Sell accent.")
+
+// =====================================================================
+// RISK CONTROLS & STRATEGY EXPERIMENTS
+// Four independent controls, each defaulting to OFF/0 so the sim output is
+// byte-identical to the +58R baseline until a control is explicitly enabled.
+//   1) Max trades/day      — caps NEW opens per PHT day.
+//   2) Daily loss stop (R) — halts NEW opens once today's realized R sinks.
+//   3) Bias-flip exit      — react when 1H bias turns against an open trade.
+//   4) Size-gated BOS      — require breakouts to clear the swing by ×ATR.
+// =====================================================================
+g_risk = "Risk Controls & Strategy Experiments"
+i_max_day_trades = input.int(0, "Max trades per day (0 = off)", minval=0, group=g_risk,
+     tooltip="Stop OPENING new trades once this many have opened today (PHT). Existing trades resolve normally. 0 = disabled.")
+i_max_day_loss_r = input.float(0.0, "Daily loss stop (R, 0 = off)", step=0.5, minval=0.0, group=g_risk,
+     tooltip="Stop OPENING new trades once today's realized R ≤ −this value (PHT). Open trades still resolve. 0 = disabled.")
+i_exit_on_flip = input.bool(false, "Exit on HTF bias flip", group=g_risk,
+     tooltip="When the 1H bias flips OPPOSITE an open trade, act on it instead of riding to the full stop. Targets the 'stopped at the bias change' loss. Off = current behavior.")
+i_flip_action = input.string("Move to BE", "…on flip, action", options=["Move to BE","Close at market"], group=g_risk,
+     tooltip="Move to BE: pull the stop to entry (only if that tightens it) and let the engine close it normally. Close at market: exit now at the current price.")
+i_bos_min_atr = input.float(0.0, "Min BOS size (×ATR, 0 = off)", step=0.1, minval=0.0, group=g_risk,
+     tooltip="Require the breakout close to clear the swing by at least this ×ATR before it counts as a BOS. Stops tiny wick-breaks from flipping structure and cancelling setups. 0 = disabled.")
+
+// =====================================================================
+// TRADE UDT — per-position state. Held in array<Trade> inside the sig-TF
+// function so multiple trades can run concurrently. Reference-typed:
+// modifying a Trade fetched via array.get mutates the stored instance.
+// =====================================================================
+type Trade
+    bool   is_long       = false
+    float  entry         = na
+    float  sl            = na
+    float  tp1           = na
+    float  tp2           = na
+    float  tp3           = na
+    float  eff_sl        = na
+    float  eff_sl_r      = na
+    bool   tp1_done      = false
+    bool   tp2_done      = false
+    bool   tp3_done      = false
+    int    open_bar      = 0
+    int    open_day      = 0
+    int    open_month    = 0
+    // OB origin bar this position opened from. Used by the one-position-per-OB
+    // gate so a 2nd/3rd concurrent trade can't re-enter the same order block.
+    int    ob_bar        = na
+    string bias_at_open  = "ranging"
+    float  mfe_r         = 0.0
+    float  mae_r         = 0.0
+    // Session/weekday attribution captured AT OPEN (for the R-breakdown panel).
+    // open_sess_idx: 0=Asia,1=London,2=NYAM,3=NYLU,4=NYPM, -1=other/none.
+    // open_dow: raw Pine dayofweek (1=Sun..7=Sat) at the open bar, Asia/Manila.
+    int    open_sess_idx = -1
+    int    open_dow      = 0
+
+// =====================================================================
+// SIGNAL-STATE UDT — bundles everything compute_sig_state() returns
+// across the request.security boundary. Includes:
+//   • Setup flags (bull_setup / bear_setup / forming)
+//   • Displayed trade fields (most recently opened active trade)
+//   • Aggregate sim stats
+//   • Per-bar EVENT flags (open/TP/close) — used by chart-side drawings
+//     instead of bar-transition detection, which doesn't work when N>1
+//     trades can be active simultaneously.
+// =====================================================================
+type SigState
+    // Setup detection
+    bool   bull_setup    = false
+    bool   bear_setup    = false
+    bool   bull_forming  = false
+    bool   bear_forming  = false
+    // Potential-entry level the engine is WAITING for while in WATCH state
+    // (OB edge ± Entry-proximity×ATR). watch_dir: +1 buy, -1 sell, 0 none.
+    float  watch_entry_px = na
+    int    watch_dir      = 0
+    float  watch_sl_px   = na
+    float  watch_tp1_px  = na
+    float  watch_tp2_px  = na
+    // Displayed (latest opened active) trade
+    bool   sim_long      = false
+    bool   sim_short     = false
+    float  sim_entry     = na
+    float  sim_sl        = na
+    float  sim_tp1       = na
+    float  sim_tp2       = na
+    float  sim_tp3       = na
+    float  sim_eff_sl    = na
+    float  sim_eff_sl_r  = na
+    bool   sim_tp1_done  = false
+    bool   sim_tp2_done  = false
+    bool   sim_tp3_done  = false
+    int    active_count  = 0
+    // Sim aggregates
+    int    sim_count     = 0
+    int    sim_wins      = 0
+    int    sim_losses    = 0
+    float  sim_total_r   = 0.0
+    float  sim_total_usd = 0.0
+    float  max_dd_pts    = 0.0
+    // Edge / cost metrics (gross buckets + spread accrual + excursions)
+    float  gross_win_r    = 0.0
+    float  gross_loss_r   = 0.0
+    int    max_loss_streak = 0
+    int    max_win_streak  = 0
+    float  sum_spread_r   = 0.0
+    float  sum_mfe_r      = 0.0
+    float  sum_mae_r      = 0.0
+    // Day aggregates (PHT open-day attribution)
+    float  day_r_today      = 0.0
+    float  day_usd_today    = 0.0
+    int    day_wins_today   = 0
+    int    day_losses_today = 0
+    int    day_opens_today  = 0
+    // Sim date-range coverage (first/last in-range bar time)
+    int    sim_first_time   = na
+    int    sim_last_time    = na
+    // Diagnostic
+    bool   h1_bull              = false
+    bool   h1_bear              = false
+    string h1_bias_s            = "ranging"
+    string disp_bias_at_open    = ""
+    string session_now          = "off"
+    // Gating flags
+    bool   in_date_range = true
+    bool   in_session    = true
+    bool   cooldown_ok   = true
+    // Diagnostic: 2nd/3rd-position skip reasons (read-only).
+    string add_reason_s    = ""
+    string last_add_skip_s = "—"
+    // Per-bar event flags (reset each sig-TF bar; latched true if event fired)
+    bool   evt_open_long      = false
+    bool   evt_open_short     = false
+    bool   evt_tp1            = false
+    bool   evt_tp2            = false
+    bool   evt_tp3            = false
+    bool   evt_close_long_tp  = false
+    bool   evt_close_long_sl  = false
+    bool   evt_close_short_tp = false
+    bool   evt_close_short_sl = false
+    // Latest event's trail step (for SL label retext): 0=none, 1=BE, 2=TP1, 3=TP2
+    int    evt_trail_step     = 0
+    // -- SMC visuals (LuxAlgo-style, BG-driven). Surfaced so the chart side
+    //    can draw structure lines / labels / OB boxes from BG levels. --
+    bool   smc_bos_bull   = false   // a bull BOS fired this bar
+    bool   smc_bos_bear   = false   // a bear BOS fired this bar
+    bool   smc_choch      = false   // the BOS this bar flipped prior bias (CHoCH)
+    float  smc_bos_level  = na      // broken swing level (last_sh on bull, last_sl on bear)
+    int    smc_bos_from   = na      // bar index of the broken swing pivot
+    bool   smc_ob_new     = false   // a new BG OB formed this bar
+    bool   smc_ob_demand  = false   // OB is demand (bull) vs supply (bear)
+    float  smc_ob_high    = na      // OB upper bound
+    float  smc_ob_low     = na      // OB lower bound
+    int    smc_ob_from    = na      // OB origin bar index
+    float  smc_ob_atr     = na      // ATR at OB formation (for min-size filter)
+    // -- Session / weekday R-breakdown buckets (data-driven from sim closes).
+    //    Index-aligned: sess 0..4 = Asia/London/NYAM/NYLU/NYPM; dow 0..6 =
+    //    Mon..Sun. Accrued in the SAME close branches as sim_total_r so
+    //    Σ(r_by_sess[in-session closes]) + Σ(off-session closes) and
+    //    Σ(r_by_dow) each reconcile to the gross total R. --
+    array<float> r_by_sess = na
+    array<int>   n_by_sess = na
+    array<float> r_by_dow  = na
+    array<int>   n_by_dow  = na
+
+// =====================================================================
+// SUGGESTIONS UDT + lookup function. Holds the per-TF starting-point
+// values displayed in the tuning suggestions panel. Reading these on
+// every barstate.islast tick means the panel updates live whenever the
+// user changes the Signal TF input — Pine inputs can't carry dynamic
+// labels themselves, so we render the comparison on-chart instead.
+// =====================================================================
+type Suggestions
+    // Structure Detection
+    int    swing_len    = 2
+    int    bos_age      = 30
+    int    ob_age       = 60
+    float  entry_atr    = 0.5
+    int    atr_per      = 14
+    float  sl_buf       = 0.1
+    float  min_sl       = 7.0
+    float  min_sl_flt   = 5.0
+    // HTF Bias
+    string htf_tf       = "60"
+    int    h1_fast      = 12
+    int    h1_slow      = 80
+    // Simulated Trades
+    int    cooldown     = 6
+    int    max_pos      = 2
+
+get_suggestions(string tf) =>
+    Suggestions s = Suggestions.new()
+    // Defaults above match the 5m baseline. Only overrides per TF below.
+    if tf == "1"
+        s.swing_len  := 3
+        s.bos_age    := 150
+        s.ob_age     := 300
+        s.entry_atr  := 0.3
+        s.atr_per    := 50
+        s.sl_buf     := 0.1
+        s.min_sl     := 5.0
+        s.min_sl_flt := 3.0
+        s.htf_tf     := "15"
+        s.cooldown   := 30
+        s.max_pos    := 3
+    else if tf == "15"
+        // Tuned for XAUUSD 15m, HTF(1H) bias gate ON.
+        // Restored from user's deleted +58R chart (2026-06-04):
+        // Asia 0800-1200 (Mon/Tue/Fri) + London 1400-1700 (Tue-Fri).
+        // 98 trades, 52W/46L, 53.1% WR, +58R on the TV sim — which is
+        // SPREAD-BLIND. Confirm in the EA backtest with spread modeled
+        // before trusting the +58R live.
+        s.swing_len  := 1
+        s.bos_age    := 20
+        s.ob_age     := 40
+        s.entry_atr  := 0.4
+        s.sl_buf     := 0.45
+        s.min_sl     := 9.0
+        s.min_sl_flt := 4.0
+        s.htf_tf     := "60"
+        s.cooldown   := 2
+        s.max_pos    := 1
+    else if tf == "30"
+        s.entry_atr  := 0.7
+        s.bos_age    := 15
+        s.ob_age     := 30
+        s.sl_buf     := 0.15
+        s.min_sl     := 15.0
+        s.min_sl_flt := 10.0
+        s.htf_tf     := "240"
+        s.cooldown   := 3
+        s.max_pos    := 1
+    else if tf == "60"
+        s.entry_atr  := 0.7
+        s.bos_age    := 10
+        s.ob_age     := 25
+        s.sl_buf     := 0.2
+        s.min_sl     := 25.0
+        s.min_sl_flt := 15.0
+        s.htf_tf     := "D"
+        s.cooldown   := 2
+        s.max_pos    := 1
+    s
+
+// =====================================================================
+// KILLZONE UDT + helpers — per-session visual boxes on the chart. Each
+// enabled killzone holds an array of boxes (one per past session, up to
+// i_kz_max_days). The active session's box extends right and updates
+// top/bottom to match the high/low seen since session start. The
+// was_in_sess field tracks the previous bar's session membership so
+// transitions (new session start) are detected without history refs.
+// =====================================================================
+type KZ
+    string title       = ""
+    color  base_color  = color.gray
+    string session_str = ""
+    array<box> boxes   = na
+    bool   was_in_sess = false
+
+initKZ() =>
+    array<KZ> res = array.new<KZ>()
+    if i_use_asia
+        res.push(KZ.new(i_asia_txt,   i_asia_color,   i_asia_sess,   array.new<box>(), false))
+    if i_use_london
+        res.push(KZ.new(i_london_txt, i_london_color, i_london_sess, array.new<box>(), false))
+    if i_use_nyam
+        res.push(KZ.new(i_nyam_txt,   i_nyam_color,   i_nyam_sess,   array.new<box>(), false))
+    if i_use_nylu
+        res.push(KZ.new(i_nylu_txt,   i_nylu_color,   i_nylu_sess,   array.new<box>(), false))
+    if i_use_nypm
+        res.push(KZ.new(i_nypm_txt,   i_nypm_color,   i_nypm_sess,   array.new<box>(), false))
+    res
+
+var array<KZ> killzones = initKZ()
+
+method update_kz(KZ this) =>
+    in_sess = not na(time(timeframe.period, this.session_str, i_kz_tz))
+    if in_sess and not this.was_in_sess
+        box_c  = color.new(this.base_color, i_box_trans)
+        text_c = color.new(this.base_color, i_text_trans)
+        new_box = box.new(time, high, time, low,
+                          xloc         = xloc.bar_time,
+                          border_color = i_show_kz ? box_c : na,
+                          bgcolor      = i_show_kz ? box_c : na,
+                          text         = i_show_kz and i_show_kz_txt ? this.title : "",
+                          text_color   = text_c,
+                          text_halign  = text.align_center,
+                          text_valign  = text.align_center,
+                          text_size    = size.large)
+        array.unshift(this.boxes, new_box)
+        if array.size(this.boxes) > i_kz_max_days
+            box.delete(array.pop(this.boxes))
+    if in_sess and array.size(this.boxes) > 0
+        b = array.get(this.boxes, 0)
+        box.set_right(b, time)
+        box.set_top(b,    math.max(box.get_top(b),    high))
+        box.set_bottom(b, math.min(box.get_bottom(b), low))
+    this.was_in_sess := in_sess
+
+// =====================================================================
+// compute_sig_state() — full signal + sim pipeline. See header for the
+// signal-TF lift rationale. Multi-position update: trades are stored in
+// a var array<Trade> inside this function; entry pushes a new Trade,
+// TP/SL processing iterates the array (newest-first for safe removal).
+// =====================================================================
+compute_sig_state() =>
+    // -- Volatility (ATR is still needed for SL buffer + entry proximity) --
+    atr_val = ta.atr(i_atr_per)
+
+    // -- 1H bias (nested HTF request from sig-TF context) --
+    // Non-repaint pattern: [1] + lookahead_on ensures we read the
+    // PREVIOUS closed HTF bar's value (not the forming bar), so realtime
+    // signals and historical replays produce identical entries. Trade-off:
+    // bias is 1 closed HTF bar stale (~ tf duration behind). Do NOT
+    // "fix" this back to close + lookahead_off — that reintroduces repaint.
+    h1_close = request.security(syminfo.tickerid, i_h1_tf, close[1], barmerge.gaps_off, barmerge.lookahead_on)
+    h1_fast  = request.security(syminfo.tickerid, i_h1_tf, ta.ema(close, i_h1_fast)[1], barmerge.gaps_off, barmerge.lookahead_on)
+    h1_slow  = request.security(syminfo.tickerid, i_h1_tf, ta.ema(close, i_h1_slow)[1], barmerge.gaps_off, barmerge.lookahead_on)
+    h1_bull  = h1_fast > h1_slow and h1_close > h1_fast
+    h1_bear  = h1_fast < h1_slow and h1_close < h1_fast
+    h1_bias_s = h1_bull ? "bullish" : h1_bear ? "bearish" : "ranging"
+
+    // -- Swings / BOS / OB --
+    ph = ta.pivothigh(i_swing_len, i_swing_len)
+    pl = ta.pivotlow (i_swing_len, i_swing_len)
+
+    var float last_sh    = na
+    var int   last_sh_bi = na
+    var float last_sl    = na
+    var int   last_sl_bi = na
+
+    if not na(ph)
+        last_sh    := ph
+        last_sh_bi := bar_index - i_swing_len
+    if not na(pl)
+        last_sl    := pl
+        last_sl_bi := bar_index - i_swing_len
+
+    bull_bos = not na(last_sh) and close > last_sh and close[1] <= last_sh
+    bear_bos = not na(last_sl) and close < last_sl and close[1] >= last_sl
+
+    // -- Size-gated BOS (Risk Controls). When i_bos_min_atr > 0, the close
+    //    must clear the broken swing by at least i_bos_min_atr × ATR for the
+    //    break to count. Applied to the raw bos flags BEFORE they drive
+    //    active-structure flips and OB recompute, so everything downstream
+    //    (structure, OB, setups, SMC visuals) stays consistent. At default 0
+    //    both clauses are unconditionally true → true no-op.
+    bull_bos := bull_bos and (i_bos_min_atr <= 0 or (close - last_sh) >= i_bos_min_atr * atr_val)
+    bear_bos := bear_bos and (i_bos_min_atr <= 0 or (last_sl - close) >= i_bos_min_atr * atr_val)
+
+    var bool  active_bull_bos = false
+    var bool  active_bear_bos = false
+    var int   bos_bar         = na
+    var int   last_bull_bos_b = na
+    var int   last_bear_bos_b = na
+
+    if bull_bos
+        active_bull_bos := true
+        active_bear_bos := false
+        bos_bar         := bar_index
+        last_bull_bos_b := bar_index
+    if bear_bos
+        active_bear_bos := true
+        active_bull_bos := false
+        bos_bar         := bar_index
+        last_bear_bos_b := bar_index
+
+    if active_bull_bos and (bar_index - bos_bar) > i_bos_age
+        active_bull_bos := false
+    if active_bear_bos and (bar_index - bos_bar) > i_bos_age
+        active_bear_bos := false
+
+    var float ob_high   = na
+    var float ob_low    = na
+    var int   ob_bar    = na
+    var bool  ob_demand = false
+
+    if bull_bos
+        ob_high := na
+        ob_low  := na
+        ob_bar  := na
+        for i = 1 to math.min(i_ob_age, bar_index - 1)
+            if close[i] < open[i]
+                ob_high   := high[i]
+                ob_low    := low[i]
+                ob_bar    := bar_index - i
+                ob_demand := true
+                break
+
+    if bear_bos
+        ob_high := na
+        ob_low  := na
+        ob_bar  := na
+        for i = 1 to math.min(i_ob_age, bar_index - 1)
+            if close[i] > open[i]
+                ob_high   := high[i]
+                ob_low    := low[i]
+                ob_bar    := bar_index - i
+                ob_demand := false
+                break
+
+    // -- SMC structure-event classification (BG-driven; visuals only) --
+    // last_bos_dir tracks the prior structural bias from BG BOS events only
+    // (+1 = last break was bullish, -1 = bearish). A break in the opposite
+    // direction to the stored bias is a CHoCH; a same-direction break is a
+    // plain BOS. No separate LuxAlgo trend engine — derived purely from BG.
+    var int last_bos_dir = 0
+
+    bool  smc_bos_bull  = bull_bos
+    bool  smc_bos_bear  = bear_bos
+    bool  smc_choch     = false
+    float smc_bos_level = na
+    int   smc_bos_from  = na
+
+    if bull_bos
+        smc_choch     := last_bos_dir == -1
+        smc_bos_level := last_sh
+        smc_bos_from  := last_sh_bi
+        last_bos_dir  := 1
+    else if bear_bos
+        smc_choch     := last_bos_dir == 1
+        smc_bos_level := last_sl
+        smc_bos_from  := last_sl_bi
+        last_bos_dir  := -1
+
+    // A new OB is formed on the same bar a BOS fires (BG sets ob_* there).
+    bool  smc_ob_new    = (bull_bos or bear_bos) and not na(ob_bar)
+    bool  smc_ob_demand = ob_demand
+    float smc_ob_high   = ob_high
+    float smc_ob_low    = ob_low
+    int   smc_ob_from   = ob_bar
+
+    // -- Setup detection --
+    have_ob_bull = active_bull_bos and not na(ob_high) and ob_demand
+    have_ob_bear = active_bear_bos and not na(ob_low)  and not ob_demand
+
+    dist_bull = have_ob_bull ? (close > ob_high ? close - ob_high : 0.0) : na
+    dist_bear = have_ob_bear ? (close < ob_low  ? ob_low  - close : 0.0) : na
+
+    near_bull = have_ob_bull and not na(dist_bull) and dist_bull <= i_entry_atr * atr_val
+    near_bear = have_ob_bear and not na(dist_bear) and dist_bear <= i_entry_atr * atr_val
+
+    // HTF agreement: when required, the bias must match the trade
+    // direction OR be neutral (not actively opposed).
+    h1_ok_bull = not i_req_h1 or h1_bull or (not i_strict_bias and not h1_bear)
+    h1_ok_bear = not i_req_h1 or h1_bear or (not i_strict_bias and not h1_bull)
+
+    bull_setup = have_ob_bull and near_bull and h1_ok_bull
+    bear_setup = have_ob_bear and near_bear and h1_ok_bear
+
+    bull_forming = have_ob_bull and h1_ok_bull and not near_bull
+    bear_forming = have_ob_bear and h1_ok_bear and not near_bear
+
+    // -- Potential-entry (WATCH) level the engine is waiting for. Mirrors the
+    //    near_bull / near_bear proximity trigger: near_bull fires when
+    //    close <= ob_high + i_entry_atr*atr_val, near_bear when
+    //    close >= ob_low - i_entry_atr*atr_val. So the awaited price is the
+    //    OB edge offset by the proximity band. Purely informational — no
+    //    effect on signal/sim math. --
+    float watch_entry_px = na
+    int   watch_dir      = 0
+    if bull_forming
+        watch_entry_px := ob_high + i_entry_atr * atr_val
+        watch_dir      := 1
+    else if bear_forming
+        watch_entry_px := ob_low - i_entry_atr * atr_val
+        watch_dir      := -1
+
+    // -- Projected SL / TP1 / TP2 for the WATCHED setup. Mirrors the REAL
+    //    entry's SL math (raw_sl = OB edge ± i_sl_buf*atr, then Min-SL CLAMP
+    //    widening) but projects from watch_entry_px. Purely visual — the
+    //    Min-SL *reject* filter is intentionally NOT applied here; that only
+    //    matters at real fire time. --
+    float watch_sl_px  = na
+    float watch_tp1_px = na
+    float watch_tp2_px = na
+    if bull_forming
+        raw_sl_w = ob_low - i_sl_buf * atr_val
+        sl_w = (i_min_sl > 0 and (watch_entry_px - raw_sl_w) < i_min_sl) ? watch_entry_px - i_min_sl : raw_sl_w
+        risk_w = watch_entry_px - sl_w
+        watch_sl_px  := sl_w
+        watch_tp1_px := watch_entry_px + 1.0 * risk_w
+        watch_tp2_px := watch_entry_px + 2.0 * risk_w
+    else if bear_forming
+        raw_sl_w = ob_high + i_sl_buf * atr_val
+        sl_w = (i_min_sl > 0 and (raw_sl_w - watch_entry_px) < i_min_sl) ? watch_entry_px + i_min_sl : raw_sl_w
+        risk_w = sl_w - watch_entry_px
+        watch_sl_px  := sl_w
+        watch_tp1_px := watch_entry_px - 1.0 * risk_w
+        watch_tp2_px := watch_entry_px - 2.0 * risk_w
+
+    // -- Sim state: array of active trades + aggregate counters --
+    var array<Trade> active_trades = array.new<Trade>(0)
+    var int   sim_close_bar   = na
+
+    var int   sim_wins      = 0
+    var int   sim_losses    = 0
+    var float sim_total_r   = 0.0
+    var float sim_total_usd = 0.0
+    var int   sim_count     = 0
+
+    // -- Edge / cost accumulators. Mutated in the SAME close branches as the
+    //    existing R classification so gross and net always describe the same
+    //    trades and can never drift. Net/derived figures are computed chart-
+    //    side from these; the gross sim_total_r / sim_total_usd / win-loss
+    //    counts above are never altered. --
+    var float gross_win_r     = 0.0   // sum of realized +R on winning closes
+    var float gross_loss_r    = 0.0   // sum of |R| (positive) on losing closes
+    var int   cur_loss_streak = 0
+    var int   max_loss_streak = 0
+    var int   cur_win_streak  = 0
+    var int   max_win_streak  = 0
+    var float sum_spread_r    = 0.0   // Σ (i_spread / risk_pts) per closed trade
+    var float sum_mfe_r       = 0.0   // Σ best favorable excursion (R) per trade
+    var float sum_mae_r       = 0.0   // Σ worst adverse excursion (R, ≤0) per trade
+
+    // -- Session / weekday R-breakdown buckets. Realized R + trade count
+    //    attributed to the session and weekday each trade OPENED in. Mutated
+    //    in the SAME close branches as sim_total_r so they can never drift
+    //    from the gross total. sess: 0=Asia 1=London 2=NYAM 3=NYLU 4=NYPM;
+    //    -1 = opened off-session (only possible when sessions disabled) →
+    //    that trade's R lands in NO session bucket but DOES land in a dow
+    //    bucket, so Σ(dow) == gross total R always, and Σ(sess) == gross
+    //    total R whenever every trade opened inside a killzone. --
+    var array<float> r_by_sess = array.new<float>(5, 0.0)
+    var array<int>   n_by_sess = array.new<int>(5, 0)
+    var array<float> r_by_dow  = array.new<float>(7, 0.0)
+    var array<int>   n_by_dow  = array.new<int>(7, 0)
+
+    // Realized-equity drawdown (raw points). Tracks the running cumulative
+    // sim_total_usd curve: dd_peak_pts is the high-water mark, max_dd_pts
+    // the largest peak-to-trough decline seen. Updated once per bar right
+    // after the active-trades close loop (below), so sim_total_usd is final
+    // for the bar at update time. Display rescales by the lot multiplier.
+    var float dd_peak_pts   = 0.0
+    var float max_dd_pts    = 0.0
+
+    var int   day_anchor       = na
+    var int   month_anchor     = na
+    var float day_r_today      = 0.0
+    var float day_usd_today    = 0.0
+    var int   day_wins_today   = 0
+    var int   day_losses_today = 0
+    var int   day_opens_today  = 0
+
+    // Sim date-range coverage: first/last bar time the sim actually
+    // evaluated (set only on in-range bars below).
+    var int   sim_first_time   = na
+    var int   sim_last_time     = na
+
+    day_today   = dayofmonth(time, "Asia/Manila")
+    month_today = month(time, "Asia/Manila")
+
+    if na(day_anchor) or day_today != day_anchor or month_today != month_anchor
+        day_anchor       := day_today
+        month_anchor     := month_today
+        day_r_today      := 0.0
+        day_usd_today    := 0.0
+        day_wins_today   := 0
+        day_losses_today := 0
+        day_opens_today  := 0
+
+    // Cooldown: only blocks when zero trades are open (multi-position mode
+    // shouldn't wait between trades, only after the bench fully empties).
+    cooldown_ok = array.size(active_trades) > 0 or
+      na(sim_close_bar) or (bar_index - sim_close_bar) >= i_cooldown
+
+    // -- Date range filter (PHT live-rolling current week / month) --
+    curmonth_y     = year(timenow,  "Asia/Manila")
+    curmonth_m     = month(timenow, "Asia/Manila")
+    curmonth_start = timestamp("Asia/Manila", curmonth_y, curmonth_m, 1, 0, 0)
+    nextmonth_y    = curmonth_m == 12 ? curmonth_y + 1 : curmonth_y
+    nextmonth_m    = curmonth_m == 12 ? 1 : curmonth_m + 1
+    curmonth_end   = timestamp("Asia/Manila", nextmonth_y, nextmonth_m, 1, 0, 0)
+
+    curday_y      = year(timenow,       "Asia/Manila")
+    curday_m      = month(timenow,      "Asia/Manila")
+    curday_d      = dayofmonth(timenow, "Asia/Manila")
+    curday_dow    = dayofweek(timenow,  "Asia/Manila")
+    today_start   = timestamp("Asia/Manila", curday_y, curday_m, curday_d, 0, 0)
+    days_to_mon   = curday_dow == 1 ? 6 : curday_dow - 2
+    curweek_start = today_start   - days_to_mon * 86400000
+    curweek_end   = curweek_start + 7           * 86400000
+
+    // Rolling "last N days" windows, anchored at current real-time.
+    last7_start  = timenow - 7  * 86400000
+    last14_start = timenow - 14 * 86400000
+    last30_start = timenow - 30 * 86400000
+    last60_start = timenow - 60 * 86400000
+
+    inside_curweek  = time >= curweek_start  and time <  curweek_end
+    inside_curmonth = time >= curmonth_start and time <  curmonth_end
+    inside_last7    = time >= last7_start
+    inside_last14   = time >= last14_start
+    inside_last30   = time >= last30_start
+    inside_last60   = time >= last60_start
+    inside_custom   = time >= i_date_from    and time <= i_date_to
+
+    filter_active = i_use_curweek or i_use_curmonth or
+      i_use_last7 or i_use_last14 or i_use_last30 or i_use_last60 or
+      i_use_dates
+    // Priority: shorter window wins when multiple are ticked.
+    inside_range = i_use_curweek  ? inside_curweek  :
+      i_use_curmonth ? inside_curmonth :
+      i_use_last7    ? inside_last7    :
+      i_use_last14   ? inside_last14   :
+      i_use_last30   ? inside_last30   :
+      i_use_last60   ? inside_last60   :
+      inside_custom
+
+    // Day-of-week info used by the per-session DoW gate below
+    // (Asia/Manila). Global DoW filter was removed in favor of
+    // per-session toggles under "Killzones / Session Filter".
+    bar_dow = dayofweek(time, "Asia/Manila")
+
+    in_date_range = not filter_active or inside_range
+
+    // Track the window the sim actually evaluated: first → last in-range bar.
+    if in_date_range
+        if na(sim_first_time)
+            sim_first_time := time
+        sim_last_time := time
+
+    // -- Session filter (5 killzones, all in the user-selected timezone). --
+    in_kz_asia   = not na(time(timeframe.period, i_asia_sess,   i_kz_tz))
+    in_kz_london = not na(time(timeframe.period, i_london_sess, i_kz_tz))
+    in_kz_nyam   = not na(time(timeframe.period, i_nyam_sess,   i_kz_tz))
+    in_kz_nylu   = not na(time(timeframe.period, i_nylu_sess,   i_kz_tz))
+    in_kz_nypm   = not na(time(timeframe.period, i_nypm_sess,   i_kz_tz))
+
+    // Per-session day-of-week filter — each killzone independently
+    // restricts which weekdays it can OPEN trades on. All 7 ticked =
+    // no restriction (default). Uses bar_dow computed above in
+    // Asia/Manila. ANDs into in_session per-session, so blocking a day
+    // for London doesn't affect Asia/NYAM/etc.
+    asia_dow_ok = (bar_dow == dayofweek.monday    and i_asia_dow_mon) or
+      (bar_dow == dayofweek.tuesday   and i_asia_dow_tue) or
+      (bar_dow == dayofweek.wednesday and i_asia_dow_wed) or
+      (bar_dow == dayofweek.thursday  and i_asia_dow_thu) or
+      (bar_dow == dayofweek.friday    and i_asia_dow_fri) or
+      (bar_dow == dayofweek.saturday  and i_asia_dow_sat) or
+      (bar_dow == dayofweek.sunday    and i_asia_dow_sun)
+    london_dow_ok = (bar_dow == dayofweek.monday    and i_london_dow_mon) or
+      (bar_dow == dayofweek.tuesday   and i_london_dow_tue) or
+      (bar_dow == dayofweek.wednesday and i_london_dow_wed) or
+      (bar_dow == dayofweek.thursday  and i_london_dow_thu) or
+      (bar_dow == dayofweek.friday    and i_london_dow_fri) or
+      (bar_dow == dayofweek.saturday  and i_london_dow_sat) or
+      (bar_dow == dayofweek.sunday    and i_london_dow_sun)
+    nyam_dow_ok = (bar_dow == dayofweek.monday    and i_nyam_dow_mon) or
+      (bar_dow == dayofweek.tuesday   and i_nyam_dow_tue) or
+      (bar_dow == dayofweek.wednesday and i_nyam_dow_wed) or
+      (bar_dow == dayofweek.thursday  and i_nyam_dow_thu) or
+      (bar_dow == dayofweek.friday    and i_nyam_dow_fri) or
+      (bar_dow == dayofweek.saturday  and i_nyam_dow_sat) or
+      (bar_dow == dayofweek.sunday    and i_nyam_dow_sun)
+    nylu_dow_ok = (bar_dow == dayofweek.monday    and i_nylu_dow_mon) or
+      (bar_dow == dayofweek.tuesday   and i_nylu_dow_tue) or
+      (bar_dow == dayofweek.wednesday and i_nylu_dow_wed) or
+      (bar_dow == dayofweek.thursday  and i_nylu_dow_thu) or
+      (bar_dow == dayofweek.friday    and i_nylu_dow_fri) or
+      (bar_dow == dayofweek.saturday  and i_nylu_dow_sat) or
+      (bar_dow == dayofweek.sunday    and i_nylu_dow_sun)
+    nypm_dow_ok = (bar_dow == dayofweek.monday    and i_nypm_dow_mon) or
+      (bar_dow == dayofweek.tuesday   and i_nypm_dow_tue) or
+      (bar_dow == dayofweek.wednesday and i_nypm_dow_wed) or
+      (bar_dow == dayofweek.thursday  and i_nypm_dow_thu) or
+      (bar_dow == dayofweek.friday    and i_nypm_dow_fri) or
+      (bar_dow == dayofweek.saturday  and i_nypm_dow_sat) or
+      (bar_dow == dayofweek.sunday    and i_nypm_dow_sun)
+
+    in_session = not i_use_sessions or
+      (i_use_asia   and in_kz_asia   and asia_dow_ok)   or
+      (i_use_london and in_kz_london and london_dow_ok) or
+      (i_use_nyam   and in_kz_nyam   and nyam_dow_ok)   or
+      (i_use_nylu   and in_kz_nylu   and nylu_dow_ok)   or
+      (i_use_nypm   and in_kz_nypm   and nypm_dow_ok)
+
+    // Active session display label (priority: NY AM > London > NY Lunch >
+    // NY PM > Asia — chosen so the most "tradeable" session wins overlap)
+    session_now = in_kz_nyam   ? i_nyam_txt   :
+      in_kz_london ? i_london_txt :
+      in_kz_nylu   ? i_nylu_txt   :
+      in_kz_nypm   ? i_nypm_txt   :
+      in_kz_asia   ? i_asia_txt   : "off"
+
+    // Numeric session index for trade attribution — SAME priority as
+    // session_now (NYAM>London>NYLU>NYPM>Asia), encoded 0..4 for the
+    // breakdown buckets. -1 = not inside any killzone right now.
+    sess_idx_now = in_kz_nyam   ? 2 :
+      in_kz_london ? 1 :
+      in_kz_nylu   ? 3 :
+      in_kz_nypm   ? 4 :
+      in_kz_asia   ? 0 : -1
+
+    // -- Per-bar event flags (local; not var — reset each bar) --
+    evt_open_long      = false
+    evt_open_short     = false
+    evt_tp1            = false
+    evt_tp2            = false
+    evt_tp3            = false
+    evt_close_long_tp  = false
+    evt_close_long_sl  = false
+    evt_close_short_tp = false
+    evt_close_short_sl = false
+    evt_trail_step     = 0
+
+    // -- Entry decision --
+    // Admits a new trade if: sim is on, capacity available, cooldown clear,
+    // bar is inside date/session windows, bar is confirmed. The Min SL
+    // filter rejects setups whose OB-derived SL is too tight BEFORE the
+    // clamp widens it (so the filter sees the natural OB size).
+    // Risk-control day gates (both true no-ops at default 0):
+    //   day_trades_ok — under the per-day open cap.
+    //   day_loss_ok   — today's realized R hasn't breached the loss stop.
+    day_trades_ok = i_max_day_trades == 0 or day_opens_today < i_max_day_trades
+    day_loss_ok   = i_max_day_loss_r == 0 or day_r_today > -i_max_day_loss_r
+    // One-position-per-OB + same-direction gate (effective when i_max_pos > 1).
+    // A new position may open only on an OB not already held by an open
+    // position, and only in the same direction as any open positions
+    // (never long + short simultaneously). No-op when i_max_pos = 1.
+    bool ob_already_held = false
+    int  active_dir      = 0      // +1 = longs open, -1 = shorts open, 0 = none
+    if array.size(active_trades) > 0
+        Trade t0 = array.get(active_trades, 0)
+        active_dir := t0.is_long ? 1 : -1
+        for gi = 0 to array.size(active_trades) - 1
+            Trade tg = array.get(active_trades, gi)
+            if not na(ob_bar) and tg.ob_bar == ob_bar
+                ob_already_held := true
+    // -- DIAGNOSTIC (read-only): why is a 2nd/3rd position NOT opening? --
+    // Only meaningful when a position is already live AND a slot is free.
+    // Reuses ob_already_held / active_dir from the gate above. Pure read —
+    // never feeds the entry condition. 2-space continuation indent so the
+    // ternary chain isn't a multiple of 4 (Pine v6 line-continuation rule).
+    string add_reason = ""
+    if array.size(active_trades) >= 1 and array.size(active_trades) < i_max_pos
+        add_reason := not in_date_range ? "DATE-OUT" :
+          not in_session ? "OFF-SESS" :
+          (not day_trades_ok or not day_loss_ok) ? "DAY-CAP" :
+          (not bull_setup and not bear_setup and not bull_forming and not bear_forming) ? "NO-SETUP/BOS" :
+          (not bull_setup and not bear_setup) ? "NOT-NEAR (watching)" :
+          ob_already_held ? "SAME-OB" :
+          ((bull_setup and active_dir == -1) or (bear_setup and active_dir == 1)) ? "OPP-DIR" :
+          "READY (will fire)"
+    // Latch the last REAL skip (a setup was present but a gate blocked it).
+    var string last_add_skip    = "—"
+    var int    last_add_skip_bi = na
+    if array.size(active_trades) >= 1 and array.size(active_trades) < i_max_pos and (bull_setup or bear_setup) and (not in_session or not in_date_range or not day_trades_ok or not day_loss_ok or ob_already_held or (bull_setup and active_dir == -1) or (bear_setup and active_dir == 1))
+        last_add_skip    := add_reason
+        last_add_skip_bi := bar_index
+    if i_sim_on and array.size(active_trades) < i_max_pos and cooldown_ok and in_date_range and in_session and day_trades_ok and day_loss_ok and barstate.isconfirmed
+        if bull_setup and not ob_already_held and (active_dir == 0 or active_dir == 1)
+            raw_sl  = ob_low - i_sl_buf * atr_val
+            raw_dst = close - raw_sl
+            // Min SL filter (reject path)
+            if i_min_sl_flt <= 0 or raw_dst >= i_min_sl_flt
+                final_sl = raw_sl
+                // Min SL clamp (widen path)
+                if i_min_sl > 0 and raw_dst < i_min_sl
+                    final_sl := close - i_min_sl
+                risk = close - final_sl
+                if risk > 0
+                    Trade t = Trade.new()
+                    t.is_long    := true
+                    t.entry      := close
+                    t.sl         := final_sl
+                    t.tp1        := close + 1.0 * risk
+                    t.tp2        := close + 2.0 * risk
+                    t.tp3        := close + 3.0 * risk
+                    t.eff_sl     := final_sl
+                    t.eff_sl_r   := -1.0
+                    t.tp1_done   := false
+                    t.tp2_done   := false
+                    t.tp3_done   := false
+                    t.open_bar     := bar_index
+                    t.open_day     := day_today
+                    t.open_month   := month_today
+                    t.bias_at_open := h1_bias_s
+                    t.open_sess_idx := sess_idx_now
+                    t.open_dow      := bar_dow
+                    t.ob_bar        := ob_bar
+                    array.push(active_trades, t)
+                    sim_count       += 1
+                    day_opens_today += 1
+                    evt_open_long   := true
+        else if bear_setup and not ob_already_held and (active_dir == 0 or active_dir == -1)
+            raw_sl  = ob_high + i_sl_buf * atr_val
+            raw_dst = raw_sl - close
+            if i_min_sl_flt <= 0 or raw_dst >= i_min_sl_flt
+                final_sl = raw_sl
+                if i_min_sl > 0 and raw_dst < i_min_sl
+                    final_sl := close + i_min_sl
+                risk = final_sl - close
+                if risk > 0
+                    Trade t = Trade.new()
+                    t.is_long    := false
+                    t.entry      := close
+                    t.sl         := final_sl
+                    t.tp1        := close - 1.0 * risk
+                    t.tp2        := close - 2.0 * risk
+                    t.tp3        := close - 3.0 * risk
+                    t.eff_sl     := final_sl
+                    t.eff_sl_r   := -1.0
+                    t.tp1_done   := false
+                    t.tp2_done   := false
+                    t.tp3_done   := false
+                    t.open_bar     := bar_index
+                    t.open_day     := day_today
+                    t.open_month   := month_today
+                    t.bias_at_open := h1_bias_s
+                    t.open_sess_idx := sess_idx_now
+                    t.open_dow      := bar_dow
+                    t.ob_bar        := ob_bar
+                    array.push(active_trades, t)
+                    sim_count        += 1
+                    day_opens_today  += 1
+                    evt_open_short   := true
+
+    // -- TP / SL chain config (shared across all active trades) --
+    // Final-TP classification: which TP closes the trade?
+    tp3_is_final = i_use_tp3 and not i_move_tp2
+    tp2_is_final = not i_use_tp3 and i_use_tp2
+    tp1_is_final = not i_use_tp3 and not i_use_tp2
+
+    // Full position rides to the highest enabled TP — no scale-out, no
+    // partial fills. Win R = the final TP's raw R value.
+    win_r_tp1 = 1.0
+    win_r_tp2 = 2.0
+    win_r_tp3 = 3.0
+
+    // -- Process active trades: TP fills + SL exits. Newest-first so we
+    //    can remove closed trades safely while iterating. --
+    if array.size(active_trades) > 0
+        for idx = array.size(active_trades) - 1 to 0
+            Trade t = array.get(active_trades, idx)
+            if bar_index <= t.open_bar
+                continue
+            opened_today = t.open_day == day_today and t.open_month == month_today
+            closed_now   = false
+            // -- MFE / MAE update (in R), BEFORE this bar's TP/SL resolution.
+            //    Normalized by the trade's ORIGINAL risk (entry→initial SL).
+            //    mfe_r = best favorable excursion seen; mae_r = worst adverse
+            //    excursion seen (ends ≤ 0 = deepest drawdown the trade saw). --
+            r_unit = math.abs(t.entry - t.sl)
+            if r_unit > 0
+                favorable = t.is_long ? (high - t.entry) / r_unit : (t.entry - low)  / r_unit
+                adverse   = t.is_long ? (low  - t.entry) / r_unit : (t.entry - high) / r_unit
+                t.mfe_r := math.max(t.mfe_r, favorable)
+                t.mae_r := math.min(t.mae_r, adverse)
+            // -- Bias-flip exit (Risk Controls). When the 1H bias has turned
+            //    OPPOSITE this trade, optionally react before normal TP/SL
+            //    resolution. Runs after MFE/MAE, before TP1, and (critically)
+            //    before the SL check below so the "Close at market" path is
+            //    resolved by the existing SL block THIS iteration.
+            //      • Move to BE  — pull eff_sl to entry only if it tightens
+            //        (long: entry below current stop; short: entry above).
+            //        No close here; the existing SL block closes it normally.
+            //      • Close at market — set eff_sl := close and recompute
+            //        eff_sl_r from the live price. Because the SL check fires
+            //        when low<=eff_sl (long) / high>=eff_sl (short) and the
+            //        bar's low<=close / high>=close are always true, the trade
+            //        closes through the existing SL path THIS bar — which does
+            //        all R/$/win-loss/spread/MFE-MAE/day accounting and the
+            //        removal. No separate close code → no double count.
+            //    At default (i_exit_on_flip = false) this entire block is skipped.
+            flip = (t.is_long and h1_bear) or (not t.is_long and h1_bull)
+            if i_exit_on_flip and flip and not closed_now
+                if i_flip_action == "Move to BE"
+                    if t.is_long
+                        if t.entry > t.eff_sl
+                            t.eff_sl   := t.entry
+                            t.eff_sl_r := math.max(t.eff_sl_r, 0.0)
+                    else
+                        if t.entry < t.eff_sl
+                            t.eff_sl   := t.entry
+                            t.eff_sl_r := math.max(t.eff_sl_r, 0.0)
+                else
+                    fr_unit = math.abs(t.entry - t.sl)
+                    if fr_unit > 0
+                        t.eff_sl   := close
+                        t.eff_sl_r := (t.is_long ? (close - t.entry) : (t.entry - close)) / fr_unit
+            // TP1
+            if not t.tp1_done and (t.is_long ? high >= t.tp1 : low <= t.tp1)
+                t.tp1_done := true
+                evt_tp1    := true
+                if tp1_is_final
+                    usd_pnl = t.is_long ? (t.tp1 - t.entry) : (t.entry - t.tp1)
+                    sim_total_r   += win_r_tp1
+                    sim_total_usd += usd_pnl
+                    sim_wins      += 1
+                    // Session/weekday attribution (same R that hit sim_total_r)
+                    bd_dow1 = (t.open_dow + 5) % 7
+                    if t.open_sess_idx >= 0
+                        array.set(r_by_sess, t.open_sess_idx, array.get(r_by_sess, t.open_sess_idx) + win_r_tp1)
+                        array.set(n_by_sess, t.open_sess_idx, array.get(n_by_sess, t.open_sess_idx) + 1)
+                    array.set(r_by_dow, bd_dow1, array.get(r_by_dow, bd_dow1) + win_r_tp1)
+                    array.set(n_by_dow, bd_dow1, array.get(n_by_dow, bd_dow1) + 1)
+                    // Edge/cost hooks (win branch)
+                    gross_win_r += win_r_tp1
+                    cur_loss_streak := 0
+                    cur_win_streak += 1
+                    max_win_streak := math.max(max_win_streak, cur_win_streak)
+                    risk_pts = math.abs(t.entry - t.sl)
+                    if risk_pts > 0
+                        sum_spread_r += i_spread / risk_pts
+                    sum_mfe_r += t.mfe_r
+                    sum_mae_r += t.mae_r
+                    if opened_today
+                        day_r_today    += win_r_tp1
+                        day_usd_today  += usd_pnl
+                        day_wins_today += 1
+                    if t.is_long
+                        evt_close_long_tp  := true
+                    else
+                        evt_close_short_tp := true
+                    sim_close_bar := bar_index
+                    closed_now    := true
+                else if i_move_be
+                    t.eff_sl   := t.entry
+                    t.eff_sl_r := 0.0
+                    evt_trail_step := 1
+            // TP2
+            if not closed_now and i_use_tp2 and not t.tp2_done and (t.is_long ? high >= t.tp2 : low <= t.tp2)
+                t.tp2_done := true
+                evt_tp2    := true
+                if tp2_is_final
+                    usd_pnl = t.is_long ? (t.tp2 - t.entry) : (t.entry - t.tp2)
+                    sim_total_r   += win_r_tp2
+                    sim_total_usd += usd_pnl
+                    sim_wins      += 1
+                    // Session/weekday attribution (same R that hit sim_total_r)
+                    bd_dow2 = (t.open_dow + 5) % 7
+                    if t.open_sess_idx >= 0
+                        array.set(r_by_sess, t.open_sess_idx, array.get(r_by_sess, t.open_sess_idx) + win_r_tp2)
+                        array.set(n_by_sess, t.open_sess_idx, array.get(n_by_sess, t.open_sess_idx) + 1)
+                    array.set(r_by_dow, bd_dow2, array.get(r_by_dow, bd_dow2) + win_r_tp2)
+                    array.set(n_by_dow, bd_dow2, array.get(n_by_dow, bd_dow2) + 1)
+                    // Edge/cost hooks (win branch)
+                    gross_win_r += win_r_tp2
+                    cur_loss_streak := 0
+                    cur_win_streak += 1
+                    max_win_streak := math.max(max_win_streak, cur_win_streak)
+                    risk_pts = math.abs(t.entry - t.sl)
+                    if risk_pts > 0
+                        sum_spread_r += i_spread / risk_pts
+                    sum_mfe_r += t.mfe_r
+                    sum_mae_r += t.mae_r
+                    if opened_today
+                        day_r_today    += win_r_tp2
+                        day_usd_today  += usd_pnl
+                        day_wins_today += 1
+                    if t.is_long
+                        evt_close_long_tp  := true
+                    else
+                        evt_close_short_tp := true
+                    sim_close_bar := bar_index
+                    closed_now    := true
+                else if i_move_tp1
+                    // Trail to TP1 (locks +1R) — wins precedence over BE
+                    t.eff_sl   := t.tp1
+                    t.eff_sl_r := 1.0
+                    evt_trail_step := 2
+                else if i_move_be2
+                    // Trail to BE (0R) — only fires when TP1 trail is off
+                    t.eff_sl   := t.entry
+                    t.eff_sl_r := 0.0
+                    evt_trail_step := 1
+            // TP3
+            if not closed_now and i_use_tp3 and not t.tp3_done and (t.is_long ? high >= t.tp3 : low <= t.tp3)
+                t.tp3_done := true
+                evt_tp3    := true
+                if tp3_is_final
+                    usd_pnl = t.is_long ? (t.tp3 - t.entry) : (t.entry - t.tp3)
+                    sim_total_r   += win_r_tp3
+                    sim_total_usd += usd_pnl
+                    sim_wins      += 1
+                    // Session/weekday attribution (same R that hit sim_total_r)
+                    bd_dow3 = (t.open_dow + 5) % 7
+                    if t.open_sess_idx >= 0
+                        array.set(r_by_sess, t.open_sess_idx, array.get(r_by_sess, t.open_sess_idx) + win_r_tp3)
+                        array.set(n_by_sess, t.open_sess_idx, array.get(n_by_sess, t.open_sess_idx) + 1)
+                    array.set(r_by_dow, bd_dow3, array.get(r_by_dow, bd_dow3) + win_r_tp3)
+                    array.set(n_by_dow, bd_dow3, array.get(n_by_dow, bd_dow3) + 1)
+                    // Edge/cost hooks (win branch)
+                    gross_win_r += win_r_tp3
+                    cur_loss_streak := 0
+                    cur_win_streak += 1
+                    max_win_streak := math.max(max_win_streak, cur_win_streak)
+                    risk_pts = math.abs(t.entry - t.sl)
+                    if risk_pts > 0
+                        sum_spread_r += i_spread / risk_pts
+                    sum_mfe_r += t.mfe_r
+                    sum_mae_r += t.mae_r
+                    if opened_today
+                        day_r_today    += win_r_tp3
+                        day_usd_today  += usd_pnl
+                        day_wins_today += 1
+                    if t.is_long
+                        evt_close_long_tp  := true
+                    else
+                        evt_close_short_tp := true
+                    sim_close_bar := bar_index
+                    closed_now    := true
+                else if i_move_tp2
+                    t.eff_sl   := t.tp2
+                    t.eff_sl_r := 2.0
+                    evt_trail_step := 3
+            // SL: full position rides at the current trail level. R
+            // realized is simply eff_sl_r (-1 original, 0 BE, +1 TP1,
+            // +2 TP2).
+            if not closed_now and (t.is_long ? low <= t.eff_sl : high >= t.eff_sl)
+                r_realized = t.eff_sl_r
+                usd_pnl    = t.is_long ? (t.eff_sl - t.entry) : (t.entry - t.eff_sl)
+                sim_total_r   += r_realized
+                sim_total_usd += usd_pnl
+                // Session/weekday attribution (same R that hit sim_total_r)
+                bd_dows = (t.open_dow + 5) % 7
+                if t.open_sess_idx >= 0
+                    array.set(r_by_sess, t.open_sess_idx, array.get(r_by_sess, t.open_sess_idx) + r_realized)
+                    array.set(n_by_sess, t.open_sess_idx, array.get(n_by_sess, t.open_sess_idx) + 1)
+                array.set(r_by_dow, bd_dows, array.get(r_by_dow, bd_dows) + r_realized)
+                array.set(n_by_dow, bd_dows, array.get(n_by_dow, bd_dows) + 1)
+                // SL hit while trailed (eff_sl_r >= 0 means it sat at BE,
+                // TP1, or TP2) counts as a WIN — the trade reached at
+                // least its first target before the trail caught up.
+                // Only an untrailed SL hit (original level, eff_sl_r = -1)
+                // counts as a true loss.
+                sl_was_trailed = t.eff_sl_r >= 0
+                if sl_was_trailed
+                    sim_wins += 1
+                else
+                    sim_losses += 1
+                // Edge/cost hooks (same win/loss determination as above).
+                // A trailed SL that counts as a win adds its +R to the win
+                // bucket and resets the streak; an untrailed SL loss adds its
+                // |R| magnitude to the loss bucket and extends the streak.
+                if sl_was_trailed
+                    gross_win_r += r_realized
+                    cur_loss_streak := 0
+                    cur_win_streak += 1
+                    max_win_streak := math.max(max_win_streak, cur_win_streak)
+                else
+                    gross_loss_r += math.abs(r_realized)
+                    cur_loss_streak += 1
+                    max_loss_streak := math.max(max_loss_streak, cur_loss_streak)
+                    cur_win_streak := 0
+                risk_pts = math.abs(t.entry - t.sl)
+                if risk_pts > 0
+                    sum_spread_r += i_spread / risk_pts
+                sum_mfe_r += t.mfe_r
+                sum_mae_r += t.mae_r
+                if opened_today
+                    day_r_today   += r_realized
+                    day_usd_today += usd_pnl
+                    if sl_was_trailed
+                        day_wins_today += 1
+                    else
+                        day_losses_today += 1
+                if t.is_long
+                    evt_close_long_sl  := true
+                else
+                    evt_close_short_sl := true
+                sim_close_bar := bar_index
+                closed_now    := true
+            if closed_now
+                array.remove(active_trades, idx)
+
+    // -- Realized-equity drawdown update (raw points). Runs once per bar
+    //    AFTER the close loop, so sim_total_usd already reflects every
+    //    realized close on this bar. Peak = high-water mark of the
+    //    cumulative curve; cur_dd = positive distance below peak;
+    //    max_dd_pts = worst such distance seen. Display side multiplies
+    //    by the lot multiplier. --
+    dd_peak_pts := math.max(dd_peak_pts, sim_total_usd)
+    cur_dd       = dd_peak_pts - sim_total_usd
+    max_dd_pts  := math.max(max_dd_pts, cur_dd)
+
+    // -- Determine "displayed" trade = most recently opened still active --
+    int active_n = array.size(active_trades)
+    Trade disp = active_n > 0 ? array.get(active_trades, active_n - 1) : na
+    bool   d_long      = not na(disp) and disp.is_long
+    bool   d_short     = not na(disp) and not disp.is_long
+    float  d_entry     = not na(disp) ? disp.entry      : na
+    float  d_sl        = not na(disp) ? disp.sl         : na
+    float  d_tp1       = not na(disp) ? disp.tp1        : na
+    float  d_tp2       = not na(disp) ? disp.tp2        : na
+    float  d_tp3       = not na(disp) ? disp.tp3        : na
+    float  d_eff_sl    = not na(disp) ? disp.eff_sl     : na
+    float  d_eff_sl_r  = not na(disp) ? disp.eff_sl_r   : na
+    bool   d_tp1_done  = not na(disp) and disp.tp1_done
+    bool   d_tp2_done  = not na(disp) and disp.tp2_done
+    bool   d_tp3_done  = not na(disp) and disp.tp3_done
+    string d_bias_open = not na(disp) ? disp.bias_at_open : ""
+
+    // -- Build return UDT --
+    SigState s = SigState.new()
+    s.bull_setup       := bull_setup
+    s.bear_setup       := bear_setup
+    s.bull_forming     := bull_forming
+    s.bear_forming     := bear_forming
+    s.watch_entry_px   := watch_entry_px
+    s.watch_dir        := watch_dir
+    s.watch_sl_px      := watch_sl_px
+    s.watch_tp1_px     := watch_tp1_px
+    s.watch_tp2_px     := watch_tp2_px
+    s.sim_long         := d_long
+    s.sim_short        := d_short
+    s.sim_entry        := d_entry
+    s.sim_sl           := d_sl
+    s.sim_tp1          := d_tp1
+    s.sim_tp2          := d_tp2
+    s.sim_tp3          := d_tp3
+    s.sim_eff_sl       := d_eff_sl
+    s.sim_eff_sl_r     := d_eff_sl_r
+    s.sim_tp1_done     := d_tp1_done
+    s.sim_tp2_done     := d_tp2_done
+    s.sim_tp3_done     := d_tp3_done
+    s.active_count     := active_n
+    s.sim_count        := sim_count
+    s.sim_wins         := sim_wins
+    s.sim_losses       := sim_losses
+    s.sim_total_r      := sim_total_r
+    s.sim_total_usd    := sim_total_usd
+    s.max_dd_pts       := max_dd_pts
+    s.gross_win_r      := gross_win_r
+    s.gross_loss_r     := gross_loss_r
+    s.max_loss_streak  := max_loss_streak
+    s.max_win_streak   := max_win_streak
+    s.sum_spread_r     := sum_spread_r
+    s.sum_mfe_r        := sum_mfe_r
+    s.sum_mae_r        := sum_mae_r
+    s.day_r_today      := day_r_today
+    s.day_usd_today    := day_usd_today
+    s.day_wins_today   := day_wins_today
+    s.day_losses_today := day_losses_today
+    s.day_opens_today  := day_opens_today
+    s.sim_first_time   := sim_first_time
+    s.sim_last_time    := sim_last_time
+    s.h1_bull             := h1_bull
+    s.h1_bear             := h1_bear
+    s.h1_bias_s           := h1_bias_s
+    s.disp_bias_at_open   := d_bias_open
+    s.session_now         := session_now
+    s.in_date_range    := in_date_range
+    s.in_session       := in_session
+    s.cooldown_ok      := cooldown_ok
+    s.add_reason_s     := add_reason
+    s.last_add_skip_s  := last_add_skip
+    s.evt_open_long       := evt_open_long
+    s.evt_open_short      := evt_open_short
+    s.evt_tp1             := evt_tp1
+    s.evt_tp2             := evt_tp2
+    s.evt_tp3             := evt_tp3
+    s.evt_close_long_tp   := evt_close_long_tp
+    s.evt_close_long_sl   := evt_close_long_sl
+    s.evt_close_short_tp  := evt_close_short_tp
+    s.evt_close_short_sl  := evt_close_short_sl
+    s.evt_trail_step      := evt_trail_step
+    s.smc_bos_bull        := smc_bos_bull
+    s.smc_bos_bear        := smc_bos_bear
+    s.smc_choch           := smc_choch
+    s.smc_bos_level       := smc_bos_level
+    s.smc_bos_from        := smc_bos_from
+    s.smc_ob_new          := smc_ob_new
+    s.smc_ob_demand       := smc_ob_demand
+    s.smc_ob_high         := smc_ob_high
+    s.smc_ob_low          := smc_ob_low
+    s.smc_ob_from         := smc_ob_from
+    s.smc_ob_atr          := atr_val
+    s.r_by_sess           := r_by_sess
+    s.n_by_sess           := n_by_sess
+    s.r_by_dow            := r_by_dow
+    s.n_by_dow            := n_by_dow
+    s
+
+// =====================================================================
+// COMPUTE SIGNAL STATE on the chart's timeframe directly.
+// =====================================================================
+SigState st = compute_sig_state()
+
+// =====================================================================
+// UNPACK
+// =====================================================================
+bull_setup       = st.bull_setup
+bear_setup       = st.bear_setup
+bull_forming     = st.bull_forming
+bear_forming     = st.bear_forming
+watch_entry_px   = st.watch_entry_px
+watch_dir        = st.watch_dir
+watch_sl_px      = st.watch_sl_px
+watch_tp1_px     = st.watch_tp1_px
+watch_tp2_px     = st.watch_tp2_px
+sim_long         = st.sim_long
+sim_short        = st.sim_short
+sim_entry        = st.sim_entry
+sim_sl           = st.sim_sl
+sim_tp1          = st.sim_tp1
+sim_tp2          = st.sim_tp2
+sim_tp3          = st.sim_tp3
+sim_eff_sl       = st.sim_eff_sl
+sim_eff_sl_r     = st.sim_eff_sl_r
+sim_tp1_done     = st.sim_tp1_done
+sim_tp2_done     = st.sim_tp2_done
+sim_tp3_done     = st.sim_tp3_done
+active_count     = st.active_count
+sim_count        = st.sim_count
+sim_wins         = st.sim_wins
+sim_losses       = st.sim_losses
+sim_total_r      = st.sim_total_r
+sim_total_usd    = st.sim_total_usd
+max_dd_pts       = st.max_dd_pts
+gross_win_r      = st.gross_win_r
+gross_loss_r     = st.gross_loss_r
+max_loss_streak  = st.max_loss_streak
+max_win_streak   = st.max_win_streak
+sum_spread_r     = st.sum_spread_r
+sum_mfe_r        = st.sum_mfe_r
+sum_mae_r        = st.sum_mae_r
+day_r_now        = st.day_r_today
+day_usd_now      = st.day_usd_today
+day_wins_now     = st.day_wins_today
+day_losses_now   = st.day_losses_today
+day_opens_now    = st.day_opens_today
+sim_first_time   = st.sim_first_time
+sim_last_time    = st.sim_last_time
+day_count_now    = day_wins_now + day_losses_now
+h1_bull          = st.h1_bull
+h1_bear          = st.h1_bear
+h1_bias_s        = st.h1_bias_s
+bias_at_open     = st.disp_bias_at_open
+session_now      = st.session_now
+in_date_range    = st.in_date_range
+in_session       = st.in_session
+cooldown_ok      = st.cooldown_ok
+add_reason_s     = st.add_reason_s
+last_add_skip_s  = st.last_add_skip_s
+
+// Event flags drive all chart-side transitions. With multi-position, bar
+// transitions on sim_long/sim_short would miss back-to-back same-direction
+// opens, so we rely on these flags from the sig-TF function instead.
+just_opened_long   = st.evt_open_long
+just_opened_short  = st.evt_open_short
+just_hit_tp1       = st.evt_tp1
+just_hit_tp2       = st.evt_tp2
+just_hit_tp3       = st.evt_tp3
+closed_by_tp_long  = st.evt_close_long_tp
+closed_by_sl_long  = st.evt_close_long_sl
+closed_by_tp_short = st.evt_close_short_tp
+closed_by_sl_short = st.evt_close_short_sl
+just_closed_long   = closed_by_tp_long  or closed_by_sl_long
+just_closed_short  = closed_by_tp_short or closed_by_sl_short
+
+// =====================================================================
+// ALERTS (alert() — multiplexed through ONE TradingView alert slot)
+// Create a single alert on this indicator with condition
+// "Any alert() function call". Each event below fires only when its
+// sub-toggle and event flag are true. alert.freq_once_per_bar_close
+// matches the confirmed-bar sim — no intrabar spam, no repaint. These
+// run every confirmed bar (NOT gated by barstate.islast).
+// =====================================================================
+var float prev_watch = na
+var int   prev_dir   = 0
+
+if i_alerts_on
+    // -- Entry: a sim trade actually opened this confirmed bar --
+    if i_alert_entry and (just_opened_long or just_opened_short)
+        a_dir = just_opened_long ? "BUY" : "SELL"
+        a_msg = "BG 15m SETUP " + a_dir + " " + syminfo.ticker + " " + timeframe.period +
+          " @ " + str.tostring(sim_entry, format.mintick) +
+          " | SL " + str.tostring(sim_sl, format.mintick) +
+          " | TP1 " + str.tostring(sim_tp1, format.mintick) +
+          " TP2 " + str.tostring(sim_tp2, format.mintick)
+        alert(a_msg, alert.freq_once_per_bar_close)
+    // -- Watch: fire only when a NEW watch level/direction appears, so the
+    //    heads-up doesn't repeat every forming bar. --
+    if i_alert_watch and not na(watch_entry_px) and watch_dir != 0 and (na(prev_watch) or watch_dir != prev_dir)
+        w_dir = watch_dir == 1 ? "BUY" : "SELL"
+        w_msg = "BG 15m WATCH " + w_dir + " " + syminfo.ticker + " " + timeframe.period +
+          " — waiting @ " + str.tostring(watch_entry_px, format.mintick)
+        alert(w_msg, alert.freq_once_per_bar_close)
+    // -- Exit: any open trade hit a take-profit or stop this bar --
+    if i_alert_exit and (closed_by_tp_long or closed_by_sl_long or closed_by_tp_short or closed_by_sl_short)
+        x_dir   = (closed_by_tp_long or closed_by_sl_long) ? "LONG" : "SHORT"
+        x_kind  = (closed_by_tp_long or closed_by_tp_short) ? "TP" : "SL"
+        x_which = just_hit_tp3 ? " (TP3)" : just_hit_tp2 ? " (TP2)" : just_hit_tp1 ? " (TP1)" : ""
+        x_msg   = "BG 15m EXIT " + x_dir + " " + x_kind + x_which + " " +
+          syminfo.ticker + " " + timeframe.period
+        alert(x_msg, alert.freq_once_per_bar_close)
+
+// Track watch level/dir for next-bar new-watch detection (every bar).
+prev_watch := watch_entry_px
+prev_dir   := watch_dir
+
+// SMC visual fields (BG-driven; consumed by the SMC drawing section below).
+smc_bos_bull  = st.smc_bos_bull
+smc_bos_bear  = st.smc_bos_bear
+smc_choch     = st.smc_choch
+smc_bos_level = st.smc_bos_level
+smc_bos_from  = st.smc_bos_from
+smc_ob_new    = st.smc_ob_new
+smc_ob_demand = st.smc_ob_demand
+smc_ob_high   = st.smc_ob_high
+smc_ob_low    = st.smc_ob_low
+smc_ob_from   = st.smc_ob_from
+smc_ob_atr    = st.smc_ob_atr
+
+// Session / weekday R-breakdown buckets (consumed by the breakdown panel).
+r_by_sess = st.r_by_sess
+n_by_sess = st.n_by_sess
+r_by_dow  = st.r_by_dow
+n_by_dow  = st.n_by_dow
+
+// =====================================================================
+// CHART-SIDE DERIVATIONS — final-TP display
+// =====================================================================
+tp3_is_final = i_use_tp3 and not i_move_tp2
+tp2_is_final = not i_use_tp3 and i_use_tp2
+tp1_is_final = not i_use_tp3 and not i_use_tp2
+
+final_tp_price = tp3_is_final ? sim_tp3 :
+  tp2_is_final ? sim_tp2 :
+  tp1_is_final ? sim_tp1 : sim_tp3
+final_tp_lbl   = tp3_is_final ? "TP3" :
+  tp2_is_final ? "TP2" :
+  tp1_is_final ? "TP1" : "TP3 · ride"
+
+// =====================================================================
+// SIGNAL DRAWINGS — Buy/Sell labels, SL/TP lines, fill markers
+// =====================================================================
+if just_opened_long
+    label.new(bar_index, low, "Buy @ " + str.tostring(sim_entry, format.mintick),
+              yloc      = yloc.belowbar,
+              textcolor = i_col_text,
+              color     = i_col_buy,
+              style     = label.style_label_up,
+              size      = size.small)
+
+if just_opened_short
+    label.new(bar_index, high, "Sell @ " + str.tostring(sim_entry, format.mintick),
+              yloc      = yloc.abovebar,
+              textcolor = i_col_text,
+              color     = i_col_sell,
+              style     = label.style_label_down,
+              size      = size.small)
+
+// Per-trade drawings. Singleton vars hold the LATEST opened active
+// trade's lines/chips. The latest trade's chips track the chart's right
+// edge for live read-off; when a new trade opens, the previous trade's
+// chips get SNAPPED BACK to their entry-bar position (so they don't pile
+// up at the right edge as a confusing mid-chart cluster) and the new
+// trade takes over right-edge tracking. Horizontal lines are similarly
+// frozen at the previous trade's last-extended bar.
+//
+// Each trade ends up with chips visible near its own entry candle,
+// spaced apart on the x-axis by trade-entry bar — no overlap, no
+// orphaned chips floating mid-chart.
+var int   prev_entry_bar = na
+var line  ln_v_tp = na
+var line  ln_v_sl = na
+var line  ln_h_sl  = na
+var line  ln_h_tp1 = na
+var line  ln_h_tp2 = na
+var line  ln_h_tp3 = na
+var label lbl_sl  = na
+var label lbl_tp1 = na
+var label lbl_tp2 = na
+var label lbl_tp3 = na
+
+if just_opened_long or just_opened_short
+    // Snap the previous trade's chips back to its entry-bar offset so
+    // they sit near that trade's entry candle as a clean historical
+    // marker — instead of getting stranded mid-chart at wherever the
+    // right-edge tracking last left them.
+    if not na(prev_entry_bar)
+        if not na(lbl_sl)
+            label.set_x(lbl_sl,  prev_entry_bar + i_lbl_off)
+        if not na(lbl_tp1)
+            label.set_x(lbl_tp1, prev_entry_bar + i_lbl_off)
+        if not na(lbl_tp2)
+            label.set_x(lbl_tp2, prev_entry_bar + i_lbl_off)
+        if not na(lbl_tp3)
+            label.set_x(lbl_tp3, prev_entry_bar + i_lbl_off)
+    prev_entry_bar := bar_index
+
+    // Vertical dashed entry lines (entry → TP, entry → SL). Per-entry
+    // historical markers — not deleted on subsequent entries.
+    ln_v_tp := line.new(bar_index, sim_entry, bar_index, final_tp_price,
+                         color = i_col_buy,  style = line.style_dashed, width = 1)
+    ln_v_sl := line.new(bar_index, sim_entry, bar_index, sim_sl,
+                         color = i_col_sell, style = line.style_dashed, width = 1)
+
+    // Horizontal SL/TP lines — extend from entry bar; x2 updates each
+    // bar while trade is active (block below), freezes at close.
+    ln_h_sl  := line.new(bar_index, sim_eff_sl, bar_index + 1, sim_eff_sl,
+                          color = i_col_sell, width = 2)
+    ln_h_tp1 := line.new(bar_index, sim_tp1, bar_index + 1, sim_tp1,
+                          color = i_col_buy,  width = 1)
+    ln_h_tp2 := i_use_tp2 ? line.new(bar_index, sim_tp2, bar_index + 1, sim_tp2,
+                          color = i_col_buy,  width = 1) : na
+    ln_h_tp3 := i_use_tp3 ? line.new(bar_index, sim_tp3, bar_index + 1, sim_tp3,
+                          color = i_col_buy,  width = 1) : na
+
+    // Right-edge chips for live read-off.
+    lbl_sl  := label.new(bar_index + i_lbl_off, sim_sl,
+                          "SL " + str.tostring(sim_sl, format.mintick),
+                          style = label.style_label_left, color = color.new(i_col_sell, 50),
+                          textcolor = i_col_text, size = size.small)
+    lbl_tp1 := label.new(bar_index + i_lbl_off, sim_tp1,
+                          "TP1 " + str.tostring(sim_tp1, format.mintick),
+                          style = label.style_label_left, color = color.new(i_col_buy, 50),
+                          textcolor = i_col_text, size = size.small)
+    lbl_tp2 := i_use_tp2 ? label.new(bar_index + i_lbl_off, sim_tp2,
+                          "TP2 " + str.tostring(sim_tp2, format.mintick),
+                          style = label.style_label_left, color = color.new(i_col_buy, 50),
+                          textcolor = i_col_text, size = size.small) : na
+    lbl_tp3 := i_use_tp3 ? label.new(bar_index + i_lbl_off, sim_tp3,
+                          "TP3 " + str.tostring(sim_tp3, format.mintick),
+                          style = label.style_label_left, color = color.new(i_col_buy, 50),
+                          textcolor = i_col_text, size = size.small) : na
+
+// Trail step (TP1→BE, TP2→TP1, TP3→TP2): freeze the current SL segment
+// at this bar and start a new SL line at the trailed eff_sl level. This
+// preserves the historical SL position (line.new is a single rigid
+// segment — updating y on the existing line would retroactively move
+// the whole historical segment).
+if st.evt_trail_step > 0 and (sim_long or sim_short) and not na(ln_h_sl)
+    line.set_x2(ln_h_sl, bar_index)
+    trail_clr = st.evt_trail_step == 1 ? i_col_be : i_col_buy
+    ln_h_sl := line.new(bar_index, sim_eff_sl, bar_index, sim_eff_sl,
+                         color = trail_clr, width = 2)
+
+// Active trade: extend horizontal lines + chips. Lines freeze when
+// sim_long/sim_short flip false on close (this block stops running).
+if (sim_long or sim_short) and not na(ln_h_sl)
+    line.set_x2(ln_h_sl,  bar_index)
+    line.set_x2(ln_h_tp1, bar_index)
+    if not na(ln_h_tp2)
+        line.set_x2(ln_h_tp2, bar_index)
+    if not na(ln_h_tp3)
+        line.set_x2(ln_h_tp3, bar_index)
+
+if (sim_long or sim_short) and not na(lbl_sl)
+    label.set_x(lbl_sl,  bar_index + i_lbl_off)
+    label.set_x(lbl_tp1, bar_index + i_lbl_off)
+    if not na(lbl_tp2)
+        label.set_x(lbl_tp2, bar_index + i_lbl_off)
+    if not na(lbl_tp3)
+        label.set_x(lbl_tp3, bar_index + i_lbl_off)
+
+if (just_closed_long or just_closed_short) and not na(lbl_sl)
+    label.set_x(lbl_sl,  bar_index)
+    label.set_x(lbl_tp1, bar_index)
+    if not na(lbl_tp2)
+        label.set_x(lbl_tp2, bar_index)
+    if not na(lbl_tp3)
+        label.set_x(lbl_tp3, bar_index)
+
+// SL chip retext on trail step (BE / TP1 / TP2)
+if st.evt_trail_step == 1 and not na(lbl_sl)
+    label.set_y(lbl_sl, sim_eff_sl)
+    label.set_color(lbl_sl, color.new(i_col_be, 50))
+    label.set_text(lbl_sl, "SL · BE " + str.tostring(sim_eff_sl, format.mintick))
+if st.evt_trail_step == 2 and not na(lbl_sl)
+    label.set_y(lbl_sl, sim_eff_sl)
+    label.set_color(lbl_sl, color.new(i_col_buy, 50))
+    label.set_text(lbl_sl, "SL · TP1 " + str.tostring(sim_eff_sl, format.mintick))
+if st.evt_trail_step == 3 and not na(lbl_sl)
+    label.set_y(lbl_sl, sim_eff_sl)
+    label.set_color(lbl_sl, color.new(i_col_buy, 50))
+    label.set_text(lbl_sl, "SL · TP2 " + str.tostring(sim_eff_sl, format.mintick))
+
+plotshape(just_hit_tp1 and (sim_long or just_closed_long),  "TP1 Long",  shape.xcross, location.abovebar,
+          color = i_col_buy,  text = "TP1", textcolor = i_col_text, size = size.tiny)
+plotshape(just_hit_tp1 and (sim_short or just_closed_short), "TP1 Short", shape.xcross, location.belowbar,
+          color = i_col_buy,  text = "TP1", textcolor = i_col_text, size = size.tiny)
+
+plotshape(closed_by_tp_long,  "TP Long final",  shape.xcross, location.abovebar,
+          color = i_col_buy,  text = "TP", textcolor = i_col_text, size = size.tiny)
+plotshape(closed_by_tp_short, "TP Short final", shape.xcross, location.belowbar,
+          color = i_col_buy,  text = "TP", textcolor = i_col_text, size = size.tiny)
+plotshape(closed_by_sl_long,  "SL Long",   shape.circle, location.belowbar,
+          color = i_col_sell, text = "SL",  textcolor = i_col_text, size = size.tiny)
+plotshape(closed_by_sl_short, "SL Short",  shape.circle, location.abovebar,
+          color = i_col_sell, text = "SL",  textcolor = i_col_text, size = size.tiny)
+
+// Horizontal SL/TP lines are now drawn via line.new (block above), so no
+// plot()-based series here. line.new doesn't connect between trades, so
+// the multi-position stair-step is gone, and historical trades' levels
+// stay visible as frozen line segments from entry to close.
+
+// =====================================================================
+// POTENTIAL ENTRY (WATCH) LINE + LABEL
+// While the State is WATCH·BUY / WATCH·SELL, draw a single persistent
+// dashed horizontal line + price chip at the level the engine is waiting
+// for (OB edge ± Entry-proximity×ATR). Reuses ONE var line + ONE var
+// label — created once, then repositioned on barstate.islast (no per-bar
+// object spawn). Cleared (y set to na, off-chart) the moment the state
+// leaves WATCH (becomes SETUP / IN-TRADE / READY) or the toggle is off,
+// so no stale level lingers. Same right-extension + i_lbl_off chip idiom
+// as the SL/TP drawings above.
+// =====================================================================
+var line  watch_line     = na
+var label watch_lbl      = na
+var line  watch_sl_line  = na
+var label watch_sl_lbl   = na
+var line  watch_tp1_line = na
+var label watch_tp1_lbl  = na
+var line  watch_tp2_line = na
+var label watch_tp2_lbl  = na
+
+if barstate.islast
+    show_watch = i_show_watch and not na(watch_entry_px)
+    if show_watch
+        watch_clr  = color.blue
+        watch_txt  = (watch_dir == 1 ? "WATCH BUY @ " : "WATCH SELL @ ") +
+          str.tostring(watch_entry_px, format.mintick)
+        if na(watch_line)
+            watch_line := line.new(bar_index, watch_entry_px, bar_index + 1, watch_entry_px,
+                                   color = watch_clr, style = line.style_dashed, width = 1,
+                                   extend = extend.right)
+        else
+            line.set_xy1(watch_line, bar_index,     watch_entry_px)
+            line.set_xy2(watch_line, bar_index + 1, watch_entry_px)
+            line.set_color(watch_line, watch_clr)
+        if na(watch_lbl)
+            watch_lbl := label.new(bar_index + i_lbl_off, watch_entry_px, watch_txt,
+                                   style = label.style_label_left,
+                                   color = color.new(watch_clr, 50),
+                                   textcolor = i_col_text, size = size.small)
+        else
+            label.set_xy(watch_lbl, bar_index + i_lbl_off, watch_entry_px)
+            label.set_text(watch_lbl, watch_txt)
+            label.set_color(watch_lbl, color.new(watch_clr, 50))
+
+        // -- Projected SL (red) --
+        if not na(watch_sl_px)
+            watch_sl_txt = "WATCH SL @ " + str.tostring(watch_sl_px, format.mintick)
+            if na(watch_sl_line)
+                watch_sl_line := line.new(bar_index, watch_sl_px, bar_index + 1, watch_sl_px,
+                                          color = i_col_sell, style = line.style_dashed, width = 1,
+                                          extend = extend.right)
+            else
+                line.set_xy1(watch_sl_line, bar_index,     watch_sl_px)
+                line.set_xy2(watch_sl_line, bar_index + 1, watch_sl_px)
+                line.set_color(watch_sl_line, i_col_sell)
+            if na(watch_sl_lbl)
+                watch_sl_lbl := label.new(bar_index + i_lbl_off, watch_sl_px, watch_sl_txt,
+                                          style = label.style_label_left,
+                                          color = color.new(i_col_sell, 50),
+                                          textcolor = i_col_text, size = size.small)
+            else
+                label.set_xy(watch_sl_lbl, bar_index + i_lbl_off, watch_sl_px)
+                label.set_text(watch_sl_lbl, watch_sl_txt)
+                label.set_color(watch_sl_lbl, color.new(i_col_sell, 50))
+        else
+            if not na(watch_sl_line)
+                line.set_xy1(watch_sl_line, bar_index, na)
+                line.set_xy2(watch_sl_line, bar_index, na)
+            if not na(watch_sl_lbl)
+                label.set_xy(watch_sl_lbl, bar_index, na)
+                label.set_text(watch_sl_lbl, "")
+
+        // -- Projected TP1 (green) --
+        if not na(watch_tp1_px)
+            watch_tp1_txt = "WATCH TP1 @ " + str.tostring(watch_tp1_px, format.mintick)
+            if na(watch_tp1_line)
+                watch_tp1_line := line.new(bar_index, watch_tp1_px, bar_index + 1, watch_tp1_px,
+                                           color = i_col_buy, style = line.style_dashed, width = 1,
+                                           extend = extend.right)
+            else
+                line.set_xy1(watch_tp1_line, bar_index,     watch_tp1_px)
+                line.set_xy2(watch_tp1_line, bar_index + 1, watch_tp1_px)
+                line.set_color(watch_tp1_line, i_col_buy)
+            if na(watch_tp1_lbl)
+                watch_tp1_lbl := label.new(bar_index + i_lbl_off, watch_tp1_px, watch_tp1_txt,
+                                           style = label.style_label_left,
+                                           color = color.new(i_col_buy, 50),
+                                           textcolor = i_col_text, size = size.small)
+            else
+                label.set_xy(watch_tp1_lbl, bar_index + i_lbl_off, watch_tp1_px)
+                label.set_text(watch_tp1_lbl, watch_tp1_txt)
+                label.set_color(watch_tp1_lbl, color.new(i_col_buy, 50))
+        else
+            if not na(watch_tp1_line)
+                line.set_xy1(watch_tp1_line, bar_index, na)
+                line.set_xy2(watch_tp1_line, bar_index, na)
+            if not na(watch_tp1_lbl)
+                label.set_xy(watch_tp1_lbl, bar_index, na)
+                label.set_text(watch_tp1_lbl, "")
+
+        // -- Projected TP2 (green) --
+        if not na(watch_tp2_px)
+            watch_tp2_txt = "WATCH TP2 @ " + str.tostring(watch_tp2_px, format.mintick)
+            if na(watch_tp2_line)
+                watch_tp2_line := line.new(bar_index, watch_tp2_px, bar_index + 1, watch_tp2_px,
+                                           color = i_col_buy, style = line.style_dashed, width = 1,
+                                           extend = extend.right)
+            else
+                line.set_xy1(watch_tp2_line, bar_index,     watch_tp2_px)
+                line.set_xy2(watch_tp2_line, bar_index + 1, watch_tp2_px)
+                line.set_color(watch_tp2_line, i_col_buy)
+            if na(watch_tp2_lbl)
+                watch_tp2_lbl := label.new(bar_index + i_lbl_off, watch_tp2_px, watch_tp2_txt,
+                                           style = label.style_label_left,
+                                           color = color.new(i_col_buy, 50),
+                                           textcolor = i_col_text, size = size.small)
+            else
+                label.set_xy(watch_tp2_lbl, bar_index + i_lbl_off, watch_tp2_px)
+                label.set_text(watch_tp2_lbl, watch_tp2_txt)
+                label.set_color(watch_tp2_lbl, color.new(i_col_buy, 50))
+        else
+            if not na(watch_tp2_line)
+                line.set_xy1(watch_tp2_line, bar_index, na)
+                line.set_xy2(watch_tp2_line, bar_index, na)
+            if not na(watch_tp2_lbl)
+                label.set_xy(watch_tp2_lbl, bar_index, na)
+                label.set_text(watch_tp2_lbl, "")
+    else
+        // Not in WATCH (or toggle off): clear so no stale level lingers.
+        if not na(watch_line)
+            line.set_xy1(watch_line, bar_index, na)
+            line.set_xy2(watch_line, bar_index, na)
+        if not na(watch_lbl)
+            label.set_xy(watch_lbl, bar_index, na)
+            label.set_text(watch_lbl, "")
+        if not na(watch_sl_line)
+            line.set_xy1(watch_sl_line, bar_index, na)
+            line.set_xy2(watch_sl_line, bar_index, na)
+        if not na(watch_sl_lbl)
+            label.set_xy(watch_sl_lbl, bar_index, na)
+            label.set_text(watch_sl_lbl, "")
+        if not na(watch_tp1_line)
+            line.set_xy1(watch_tp1_line, bar_index, na)
+            line.set_xy2(watch_tp1_line, bar_index, na)
+        if not na(watch_tp1_lbl)
+            label.set_xy(watch_tp1_lbl, bar_index, na)
+            label.set_text(watch_tp1_lbl, "")
+        if not na(watch_tp2_line)
+            line.set_xy1(watch_tp2_line, bar_index, na)
+            line.set_xy2(watch_tp2_line, bar_index, na)
+        if not na(watch_tp2_lbl)
+            label.set_xy(watch_tp2_lbl, bar_index, na)
+            label.set_text(watch_tp2_lbl, "")
+
+// =====================================================================
+// KILLZONE RENDERING — runs each chart bar, updates each enabled
+// killzone's box for the current session. The update_kz method handles
+// both new-session detection (creates a new box) and active-session
+// extension (stretches box right + adjusts top/bottom to high/low).
+// =====================================================================
+for [_, kz] in killzones
+    update_kz(kz)
+
+// =====================================================================
+// SMC VISUALS — LuxAlgo-style structure lines + BOS/CHoCH labels and
+// order-block boxes, all driven by BG-computed levels surfaced above.
+// Drawing style adapted from "Smart Money Concepts [LuxAlgo]" (© LuxAlgo,
+// CC BY-NC-SA 4.0). No LuxAlgo detection logic — BG owns every level.
+//
+// Object budgeting: this indicator shares the 500-line / 500-label /
+// 500-box caps across SL/TP lines, signal chips, and killzone boxes. The
+// arrays below are pruned FIFO to their input keep-counts so the SMC
+// visuals can never push the totals past the caps. The structure pieces
+// only draw on confirmed bars (BG BOS events already fire on confirmed
+// bars), so there is no realtime churn to repaint.
+// =====================================================================
+var array<line>  smc_lines  = array.new<line>()
+var array<label> smc_labels = array.new<label>()
+var array<box>   smc_boxes  = array.new<box>()
+// Parallel bias array, index-aligned with smc_boxes: true = demand (bull
+// OB), false = supply (bear OB). Pine has no box.get_bgcolor() getter, so
+// each box's bias is stored explicitly here instead of being inferred from
+// the fill color. INVARIANT: every push/shift/remove on smc_boxes must do
+// the same op at the same index on smc_box_is_demand so they never desync.
+var array<bool>  smc_box_is_demand = array.new<bool>()
+// Parallel origin-bar array, index-aligned with smc_boxes: the bar_index at
+// which each box's OB formed. Used by the "active-BOS only" filter to prune
+// boxes once their originating BOS ages out (origin older than i_bos_age
+// bars). INVARIANT: pushed/shifted/removed in lockstep with smc_boxes and
+// smc_box_is_demand at all times.
+var array<int>   smc_box_origin = array.new<int>()
+
+// --- (A) Structure line + BOS/CHoCH label on each BG BOS event ---
+if i_smc_on and i_smc_struct and (smc_bos_bull or smc_bos_bear) and not na(smc_bos_level) and not na(smc_bos_from)
+    is_bull   = smc_bos_bull
+    struc_clr = is_bull ? i_smc_col_bull : i_smc_col_bear
+    tag       = smc_choch ? "CHoCH" : "BOS"
+    // Solid horizontal line at the broken swing, from the swing's bar to
+    // the break bar (LuxAlgo structure-line style).
+    ln = line.new(smc_bos_from, smc_bos_level, bar_index, smc_bos_level,
+                  color = struc_clr, style = line.style_solid, width = 1)
+    // Label at the horizontal midpoint; bull anchored above (label_down),
+    // bear below (label_up) — mirrors LuxAlgo.
+    mid = math.round(0.5 * (smc_bos_from + bar_index))
+    lb = label.new(mid, smc_bos_level, tag,
+                   xloc      = xloc.bar_index,
+                   color     = color(na),
+                   textcolor = struc_clr,
+                   style     = is_bull ? label.style_label_down : label.style_label_up,
+                   size      = size.small)
+    array.push(smc_lines,  ln)
+    array.push(smc_labels, lb)
+    // Prune oldest beyond the keep-counts (FIFO) to stay under the caps.
+    while array.size(smc_lines) > i_smc_keep_ln
+        line.delete(array.shift(smc_lines))
+    while array.size(smc_labels) > i_smc_keep_lbl
+        label.delete(array.shift(smc_labels))
+
+// --- (B) Order-block box from BG's OB, mitigation-aware ---
+// New OB → push a right-extending tinted box. Each bar, check open boxes
+// for mitigation (price trading back through the zone) and delete them,
+// mirroring LuxAlgo's deleteOrderBlocks. Stored top/bottom are encoded in
+// the box itself; demand vs supply is stored in smc_box_is_demand at the
+// same index (Pine has no box bgcolor getter).
+if i_smc_on and i_smc_obbox and smc_ob_new and not na(smc_ob_from) and not na(smc_ob_high) and not na(smc_ob_low)
+    // -- Noise filters (gate DRAWING only; never touch signal/sim math) --
+    // (1) Direction filter: keep only demand / supply / both per input.
+    dir_ok = i_smc_ob_dir == "Both" or
+      (i_smc_ob_dir == "Demand only" and smc_ob_demand) or
+      (i_smc_ob_dir == "Supply only" and not smc_ob_demand)
+    // (2) HTF-bias-aligned: demand only when H1 bull, supply only when H1 bear.
+    bias_ok = not i_smc_ob_bias_only or
+      (smc_ob_demand and h1_bull) or (not smc_ob_demand and h1_bear)
+    // (3) Min size (× ATR at formation): skip boxes shorter than the floor.
+    ob_height = smc_ob_high - smc_ob_low
+    size_ok = i_smc_ob_min_atr <= 0 or na(smc_ob_atr) or
+      ob_height >= i_smc_ob_min_atr * smc_ob_atr
+    if dir_ok and bias_ok and size_ok
+        ob_clr = color.new(smc_ob_demand ? i_smc_col_bull : i_smc_col_bear, i_smc_ob_trans)
+        // (4) Right-extension cap: 0 = stretch right (current behavior); >0 =
+        //     fixed right edge N bars from origin so old boxes don't span the
+        //     chart. Mitigation can still delete the box early.
+        use_extend = i_smc_ob_extend_bars <= 0
+        right_x    = use_extend ? bar_index : smc_ob_from + i_smc_ob_extend_bars
+        bx = box.new(smc_ob_from, smc_ob_high, right_x, smc_ob_low,
+                     border_color = ob_clr,
+                     bgcolor      = ob_clr,
+                     extend       = use_extend ? extend.right : extend.none)
+        array.push(smc_boxes, bx)
+        array.push(smc_box_is_demand, smc_ob_demand)   // lockstep with smc_boxes
+        array.push(smc_box_origin, smc_ob_from)        // lockstep: origin bar
+        while array.size(smc_boxes) > i_smc_keep_box
+            box.delete(array.shift(smc_boxes))
+            array.shift(smc_box_is_demand)             // prune all three FIFO
+            array.shift(smc_box_origin)                // together, same index
+
+// Mitigation sweep: delete a box once price closes back through its zone.
+// Demand (bull) OB is mitigated when close < its low; supply (bear) OB
+// when close > its high. Demand vs supply is read from the parallel
+// smc_box_is_demand array at the same index. Iterate newest-first for safe
+// in-place removal.
+if i_smc_on and i_smc_obbox and array.size(smc_boxes) > 0
+    for bi = array.size(smc_boxes) - 1 to 0
+        b      = array.get(smc_boxes, bi)
+        is_dem = array.get(smc_box_is_demand, bi)
+        origin = array.get(smc_box_origin, bi)
+        top    = box.get_top(b)
+        bot    = box.get_bottom(b)
+        mitigated = is_dem ? close < bot : close > top
+        // Active-BOS-only filter: also drop the box once its originating BOS
+        // has aged out (origin older than the BOS-age window).
+        aged_out = i_smc_ob_active_only and (bar_index - origin) > i_bos_age
+        if mitigated or aged_out
+            box.delete(b)
+            array.remove(smc_boxes, bi)
+            array.remove(smc_box_is_demand, bi)    // keep all three index-
+            array.remove(smc_box_origin, bi)       // aligned on every removal
+
+// =====================================================================
+// STATUS TABLE
+// =====================================================================
+pos_lookup(string s) =>
+    switch s
+        "top_left"     => position.top_left
+        "top_right"    => position.top_right
+        "middle_left"  => position.middle_left
+        "middle_right" => position.middle_right
+        "bottom_left"  => position.bottom_left
+        => position.bottom_right
+
+var table tbl = table.new(pos_lookup(i_tbl_pos), 2, 29,
+                          bgcolor      = color.new(color.black, 20),
+                          border_color = color.new(color.gray, 50),
+                          border_width = 1,
+                          frame_color  = color.new(color.gray, 50),
+                          frame_width  = 1)
+
+f_cell(int _row, int _col, string _txt, color _clr) =>
+    table.cell(tbl, _col, _row, _txt, text_color=_clr, text_size=size.small, text_halign=text.align_left)
+
+title_col1_txt = "v6"
+
+// Lot multiplier: rescales the raw-points $ accumulators (sim_total_usd,
+// day_usd_now, max_dd_pts) into account dollars at DISPLAY time only.
+// Default 0.01 lot × 100 = 1.0 → reproduces the original raw-points figures.
+usd_mult = i_lot * i_contract
+
+// Closed-trade count + net (spread-adjusted) figures, derived only — the
+// gross sim_total_r / sim_total_usd are never altered. With i_spread = 0,
+// sum_spread_r = 0 and the spread $ deduction is 0, so every Net figure
+// equals its Gross counterpart exactly.
+closed_count    = sim_wins + sim_losses
+net_total_r     = sim_total_r - sum_spread_r
+net_total_usd_pts = sim_total_usd - (closed_count * i_spread)
+net_total_usd   = net_total_usd_pts * usd_mult
+
+if i_show_tbl and barstate.islast
+    table.clear(tbl, 0, 0, 1, 26)
+
+    f_cell(0, 0, "BG GOLDEN",      color.new(#ffd54f, 0))
+    f_cell(0, 1, title_col1_txt,   color.new(#ffd54f, 0))
+
+    state_str = switch
+        active_count > 0          => "IN-TRADE × " + str.tostring(active_count)
+        not in_date_range         => "DATE-OUT"
+        not in_session            => "OFF-SESS"
+        not cooldown_ok           => "COOLDOWN"
+        i_max_day_loss_r > 0 and day_r_now <= -i_max_day_loss_r => "DAY-STOP"
+        i_max_day_trades > 0 and day_opens_now >= i_max_day_trades => "DAY-MAX"
+        bull_setup                => "SETUP · BUY"
+        bear_setup                => "SETUP · SELL"
+        bull_forming              => "WATCH · BUY"
+        bear_forming              => "WATCH · SELL"
+        =>                           "READY"
+    state_clr = switch
+        active_count > 0             => color.new(#ffd54f, 0)
+        not in_date_range            => color.gray
+        not in_session               => color.gray
+        i_max_day_loss_r > 0 and day_r_now <= -i_max_day_loss_r => color.gray
+        i_max_day_trades > 0 and day_opens_now >= i_max_day_trades => color.gray
+        bull_setup or bear_setup     => color.lime
+        bull_forming or bear_forming => color.new(#ffd54f, 0)
+        not cooldown_ok              => color.gray
+        =>                              color.silver
+
+    // -- OFF-SESS countdown to next session open (display-only, last bar) --
+    // When idle off-session and sessions are filtered, scan the ENABLED
+    // killzones for the earliest future start that also passes that session's
+    // weekday filter, and append a d/h/m countdown. Runs only here (under
+    // barstate.islast), so the ≤40-iteration scan is once-per-render, never
+    // per-bar. Session START times are read in i_kz_tz; the candidate's
+    // weekday is evaluated in Asia/Manila to mirror the engine's bar_dow.
+    if not in_session and i_use_sessions and
+      (i_use_asia or i_use_london or i_use_nyam or i_use_nypm or i_use_nylu)
+        nowMs = timenow
+        baseY = year(timenow,       i_kz_tz)
+        baseM = month(timenow,      i_kz_tz)
+        baseD = dayofmonth(timenow, i_kz_tz)
+        float bestMs = na
+        // Per enabled session: [startHH, startMM, allowed-weekday array (Sun..Sat)].
+        for si = 0 to 4
+            bool   en   = false
+            string sess = ""
+            array<bool> dowArr = na
+            if si == 0 and i_use_asia
+                en     := true
+                sess   := i_asia_sess
+                dowArr := array.from(i_asia_dow_sun, i_asia_dow_mon, i_asia_dow_tue, i_asia_dow_wed, i_asia_dow_thu, i_asia_dow_fri, i_asia_dow_sat)
+            else if si == 1 and i_use_london
+                en     := true
+                sess   := i_london_sess
+                dowArr := array.from(i_london_dow_sun, i_london_dow_mon, i_london_dow_tue, i_london_dow_wed, i_london_dow_thu, i_london_dow_fri, i_london_dow_sat)
+            else if si == 2 and i_use_nyam
+                en     := true
+                sess   := i_nyam_sess
+                dowArr := array.from(i_nyam_dow_sun, i_nyam_dow_mon, i_nyam_dow_tue, i_nyam_dow_wed, i_nyam_dow_thu, i_nyam_dow_fri, i_nyam_dow_sat)
+            else if si == 3 and i_use_nylu
+                en     := true
+                sess   := i_nylu_sess
+                dowArr := array.from(i_nylu_dow_sun, i_nylu_dow_mon, i_nylu_dow_tue, i_nylu_dow_wed, i_nylu_dow_thu, i_nylu_dow_fri, i_nylu_dow_sat)
+            else if si == 4 and i_use_nypm
+                en     := true
+                sess   := i_nypm_sess
+                dowArr := array.from(i_nypm_dow_sun, i_nypm_dow_mon, i_nypm_dow_tue, i_nypm_dow_wed, i_nypm_dow_thu, i_nypm_dow_fri, i_nypm_dow_sat)
+            if en
+                hh = math.round(str.tonumber(str.substring(sess, 0, 2)))
+                mm = math.round(str.tonumber(str.substring(sess, 2, 4)))
+                for d = 0 to 7
+                    cand = timestamp(i_kz_tz, baseY, baseM, baseD, hh, mm) + d * 86400000
+                    if cand > nowMs
+                        cdow = dayofweek(cand, "Asia/Manila")
+                        if array.get(dowArr, cdow - 1) and (na(bestMs) or cand < bestMs)
+                            bestMs := cand
+        if not na(bestMs)
+            rem   = bestMs - nowMs
+            days  = math.floor(rem / 86400000)
+            hours = math.floor((rem % 86400000) / 3600000)
+            mins  = math.floor((rem % 3600000) / 60000)
+            countdown = str.tostring(days) + "d " +
+              (hours < 10 ? "0" : "") + str.tostring(hours) + "h " +
+              (mins  < 10 ? "0" : "") + str.tostring(mins)  + "m"
+            state_str := "OFF-SESS " + countdown
+
+    f_cell(1, 0, "State",     color.white)
+    f_cell(1, 1, state_str,   state_clr)
+
+    symbol_line = syminfo.ticker + " " + timeframe.period + " · " + session_now
+    f_cell(2, 0, "Symbol",    color.white)
+    f_cell(2, 1, symbol_line, color.white)
+
+    // Bias rows: when in trade, show TWO rows — the bias captured AT
+    // TRADE ENTRY (row 3, the value the gate actually evaluated to allow
+    // the trade) AND the CURRENT live bias (row 4, so you can see if the
+    // market has flipped against you mid-trade). When idle, only row 3
+    // is populated with the current bias; row 4 stays blank after clear.
+    bias_to_show = active_count > 0 ? bias_at_open : h1_bias_s
+    bias_color = bias_to_show == "bullish" ? color.lime :
+      bias_to_show == "bearish" ? color.red : color.silver
+    f_cell(3, 0, active_count > 0 ? "Bias @ entry" : "Bias", color.white)
+    f_cell(3, 1, bias_to_show, bias_color)
+
+    if active_count > 0
+        bias_now_color = h1_bias_s == "bullish" ? color.lime :
+          h1_bias_s == "bearish" ? color.red : color.silver
+        f_cell(4, 0, "Bias (now)", color.white)
+        f_cell(4, 1, h1_bias_s, bias_now_color)
+
+    f_cell(5, 0, "Slots",     color.white)
+    f_cell(5, 1, str.tostring(active_count) + " / " + str.tostring(i_max_pos),
+                  active_count >= i_max_pos ? color.orange : color.silver)
+
+    // Diagnostic rows — only in multi-position mode (don't clutter 1-pos).
+    // "Add #N" = live reason the NEXT (Nth) entry is/isn't firing this bar;
+    // "Last skip" = last bar where a real setup was blocked by a gate.
+    if i_max_pos > 1
+        add_live_clr = add_reason_s == "READY (will fire)" ? color.lime :
+          add_reason_s == "" ? color.gray : color.orange
+        f_cell(27, 0, "Add #" + str.tostring(active_count + 1), color.white)
+        f_cell(27, 1, add_reason_s == "" ? "—" : add_reason_s, add_live_clr)
+        f_cell(28, 0, "Last skip", color.white)
+        f_cell(28, 1, last_add_skip_s, last_add_skip_s == "—" ? color.gray : color.orange)
+
+    // Trades — merged count + win-rate into one row (mirrors the "Day" row
+    // style below). wr reuses the SAME formula/format and zero-guard the old
+    // "Win Rate" row used; the "Win Rate" row itself is now folded in here.
+    wr = sim_wins + sim_losses > 0 ? sim_wins * 100.0 / (sim_wins + sim_losses) : 0.0
+    wr_str = str.tostring(wr, "0.0") + "%"
+    f_cell(6, 0, "Trades", color.white)
+    f_cell(6, 1, str.tostring(sim_count) + " (" + str.tostring(sim_wins) +
+                  "W/" + str.tostring(sim_losses) + "L · " + wr_str + ")", color.white)
+
+    // Total R — single R total, now the NET (spread-adjusted) figure. With
+    // i_spread = 0, net == gross so the number is unchanged from the old
+    // gross "Total Return" row. Sign/format/color mirror the old Net R cell.
+    f_cell(7, 0, "Total R", color.white)
+    f_cell(7, 1, str.tostring(net_total_r, "+0.00") + "R",
+                  net_total_r >= 0 ? color.lime : color.red)
+
+    // Total $ — single $ total, now the NET (spread-adjusted) figure × lot
+    // multiplier. With i_spread = 0, net == gross. Format/color mirror the
+    // old Net $ / Total $ cell.
+    f_cell(8, 0, "Total $", color.white)
+    f_cell(8, 1, (net_total_usd >= 0 ? "+" : "") + str.tostring(net_total_usd, "#.##"),
+                  net_total_usd >= 0 ? i_col_buy : i_col_sell)
+
+    // -- Edge metrics (folded in from the old Performance panel). Derived
+    //    chart-side from the gross accumulators; gross buckets untouched.
+    //    Net R / Net $ are NOT repeated here — they ARE the Total R / Total $
+    //    rows above. The old "N closed" header is dropped (Trades shows count).
+    expectancy_r  = closed_count > 0 ? net_total_r / closed_count : 0.0
+    profit_factor = gross_loss_r > 0 ? gross_win_r / gross_loss_r : na
+    avg_win_r     = sim_wins   > 0 ? gross_win_r  / sim_wins   : 0.0
+    avg_loss_r    = sim_losses > 0 ? gross_loss_r / sim_losses : 0.0
+    avg_mfe_r     = closed_count > 0 ? sum_mfe_r / closed_count : 0.0
+    avg_mae_r     = closed_count > 0 ? sum_mae_r / closed_count : 0.0
+
+    f_cell(9, 0, "Expectancy R", color.white)
+    f_cell(9, 1, str.tostring(expectancy_r, "+0.00") + "R",
+                  expectancy_r > 0 ? color.lime : color.red)
+
+    pf_str = na(profit_factor) ? (gross_win_r > 0 ? "∞" : "—") : str.tostring(profit_factor, "0.00")
+    pf_clr = na(profit_factor) ? (gross_win_r > 0 ? color.lime : color.silver) :
+      profit_factor > 1 ? color.lime : color.red
+    f_cell(10, 0, "Profit Factor", color.white)
+    f_cell(10, 1, pf_str, pf_clr)
+
+    f_cell(11, 0, "Avg Win R", color.white)
+    f_cell(11, 1, str.tostring(avg_win_r, "0.00") + "R", color.silver)
+    f_cell(12, 0, "Avg Loss R", color.white)
+    f_cell(12, 1, str.tostring(avg_loss_r, "0.00") + "R", color.silver)
+    f_cell(13, 0, "Max Consec W", color.white)
+    f_cell(13, 1, str.tostring(max_win_streak), color.silver)
+    f_cell(14, 0, "Max Consec L", color.white)
+    f_cell(14, 1, str.tostring(max_loss_streak), color.silver)
+    f_cell(15, 0, "Avg MFE R", color.white)
+    f_cell(15, 1, str.tostring(avg_mfe_r, "+0.00") + "R", color.silver)
+    // Avg MAE R is the worst ADVERSE excursion (per-trade mae_r ≤ 0), so the
+    // average is ≤ 0 and the "+0.00" format renders the true leading '-'.
+    f_cell(16, 0, "Avg MAE R", color.white)
+    f_cell(16, 1, str.tostring(avg_mae_r, "+0.00") + "R", color.silver)
+
+    f_cell(17, 0, "Day R (PHT)", color.white)
+    f_cell(17, 1, str.tostring(day_r_now, "+0.00") + "R",
+                  day_r_now >= 0 ? color.lime : color.red)
+
+    day_usd_disp = day_usd_now * usd_mult
+    f_cell(18, 0, "Day $ (PHT)", color.white)
+    f_cell(18, 1, (day_usd_disp >= 0 ? "+" : "") + str.tostring(day_usd_disp, "#.##"),
+                  day_usd_disp >= 0 ? i_col_buy : i_col_sell)
+
+    // Max DD $ — worst realized peak-to-trough decline of the cumulative
+    // equity curve, in account dollars (raw points × lot multiplier).
+    // Shown as a negative magnitude (a loss). Default lot reproduces raw pts.
+    max_dd_disp = max_dd_pts * usd_mult
+    f_cell(19, 0, "Max DD $", color.white)
+    f_cell(19, 1, "-" + str.tostring(max_dd_disp, "#.##"), i_col_sell)
+
+    // Day — merged trades + WR into one row. day_wr reuses the SAME formula
+    // and "0.0" format as the old "Day WR" row; the "—"/0.0% guard at zero
+    // trades is preserved inside the merged string.
+    day_wr = day_count_now > 0 ? day_wins_now * 100.0 / day_count_now : 0.0
+    day_wr_str = day_count_now > 0 ? str.tostring(day_wr, "0.0") + "%" : "—"
+    f_cell(20, 0, "Day", color.white)
+    f_cell(20, 1, str.tostring(day_count_now) + " (" + str.tostring(day_wins_now) +
+                  "W/" + str.tostring(day_losses_now) + "L · " + day_wr_str + ")",
+                  day_count_now > 0 ? color.white : color.gray)
+
+    // Sim Range — first → last in-range bar the sim actually evaluated.
+    sim_range_str = na(sim_first_time) or na(sim_last_time) ? "—" :
+      str.format_time(sim_first_time, "yyyy-MM-dd", "Asia/Manila") + " → " +
+      str.format_time(sim_last_time,  "yyyy-MM-dd", "Asia/Manila")
+    f_cell(21, 0, "Sim Range", color.white)
+    f_cell(21, 1, sim_range_str, color.silver)
+
+    if active_count > 0
+        sl_tag = sim_eff_sl_r >= 2.0 ? " (TP2)" :
+          sim_eff_sl_r >= 1.0 ? " (TP1)" :
+          sim_eff_sl_r >= 0.0 ? " (BE)"  : ""
+        f_cell(22, 0, "Dir (latest)", color.white)
+        f_cell(22, 1, sim_long ? "BUY" : "SELL", sim_long ? color.lime : color.red)
+        f_cell(23, 0, "Entry",   color.white)
+        f_cell(23, 1, str.tostring(sim_entry, format.mintick), color.white)
+        f_cell(24, 0, "SL" + sl_tag, color.white)
+        f_cell(24, 1, str.tostring(sim_eff_sl, format.mintick),
+                       sim_eff_sl_r >= 0 ? i_col_be : color.red)
+        f_cell(25, 0, "TP1" + (sim_tp1_done ? " ✓" : ""), color.white)
+        f_cell(25, 1, str.tostring(sim_tp1, format.mintick), sim_tp1_done ? color.gray : color.lime)
+        f_cell(26, 0, final_tp_lbl + " (final)", color.white)
+        f_cell(26, 1, str.tostring(final_tp_price, format.mintick), color.lime)
+
+// =====================================================================
+// TUNING SUGGESTIONS PANEL
+// Live comparison of your current settings vs the suggested values for
+// the chosen Signal TF. Three columns: param name | suggested | your
+// current value (orange when they differ, gray ✓ when they match).
+// Updates whenever the Signal TF input changes.
+// =====================================================================
+var table sug_tbl = table.new(pos_lookup(i_sug_pos), 3, 14,
+                              bgcolor      = color.new(color.black, 20),
+                              border_color = color.new(color.gray, 50),
+                              border_width = 1,
+                              frame_color  = color.new(color.gray, 50),
+                              frame_width  = 1)
+
+f_sug_hdr(int _r, string _name, string _sug_v, string _cur_v) =>
+    table.cell(sug_tbl, 0, _r, _name,   text_color=color.new(#ffd54f, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(sug_tbl, 1, _r, _sug_v,  text_color=color.new(#ffd54f, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(sug_tbl, 2, _r, _cur_v,  text_color=color.new(#ffd54f, 0), text_size=size.small, text_halign=text.align_left)
+
+f_sug_row(int _r, string _name, string _sug_v, string _cur_v, bool _match) =>
+    table.cell(sug_tbl, 0, _r, _name, text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.cell(sug_tbl, 1, _r, _sug_v, text_color=color.lime, text_size=size.small, text_halign=text.align_left)
+    table.cell(sug_tbl, 2, _r, _cur_v + (_match ? "  ✓" : ""),
+                                       text_color=_match ? color.gray : color.orange,
+                                       text_size=size.small, text_halign=text.align_left)
+
+// Float comparison tolerance — Pine floats from input can drift slightly.
+float_eq(float _a, float _b) => math.abs(_a - _b) < 0.005
+
+if i_show_sug and barstate.islast
+    table.clear(sug_tbl, 0, 0, 2, 13)
+    Suggestions sug = get_suggestions(timeframe.period)
+
+    sug_tf_label = "SUGGESTED · " + timeframe.period
+    f_sug_hdr(0, sug_tf_label, "sug", "you")
+
+    // -- Structure Detection --
+    f_sug_row(1,  "Swing strength",   str.tostring(sug.swing_len),
+                                       str.tostring(i_swing_len),  i_swing_len == sug.swing_len)
+    f_sug_row(2,  "Max BOS age",      str.tostring(sug.bos_age),
+                                       str.tostring(i_bos_age),    i_bos_age == sug.bos_age)
+    f_sug_row(3,  "Max OB lookback",  str.tostring(sug.ob_age),
+                                       str.tostring(i_ob_age),     i_ob_age == sug.ob_age)
+    f_sug_row(4,  "Entry × ATR",      str.tostring(sug.entry_atr, "0.0"),
+                                       str.tostring(i_entry_atr, "0.0"), float_eq(i_entry_atr, sug.entry_atr))
+    f_sug_row(5,  "ATR period",       str.tostring(sug.atr_per),
+                                       str.tostring(i_atr_per),    i_atr_per == sug.atr_per)
+    f_sug_row(6,  "SL buf × ATR",     str.tostring(sug.sl_buf, "0.00"),
+                                       str.tostring(i_sl_buf, "0.00"), float_eq(i_sl_buf, sug.sl_buf))
+    f_sug_row(7,  "Min SL clamp $",   str.tostring(sug.min_sl, "0.0"),
+                                       str.tostring(i_min_sl, "0.0"),  float_eq(i_min_sl, sug.min_sl))
+    f_sug_row(8,  "Min SL filter $",  str.tostring(sug.min_sl_flt, "0.0"),
+                                       str.tostring(i_min_sl_flt, "0.0"), float_eq(i_min_sl_flt, sug.min_sl_flt))
+    // -- HTF Bias --
+    f_sug_row(9,  "HTF timeframe",    sug.htf_tf,
+                                       i_h1_tf,                    i_h1_tf == sug.htf_tf)
+    f_sug_row(10, "HTF fast EMA",     str.tostring(sug.h1_fast),
+                                       str.tostring(i_h1_fast),    i_h1_fast == sug.h1_fast)
+    f_sug_row(11, "HTF slow EMA",     str.tostring(sug.h1_slow),
+                                       str.tostring(i_h1_slow),    i_h1_slow == sug.h1_slow)
+    // -- Simulated Trades --
+    f_sug_row(12, "Cooldown bars",    str.tostring(sug.cooldown),
+                                       str.tostring(i_cooldown),   i_cooldown == sug.cooldown)
+    f_sug_row(13, "Max positions",    str.tostring(sug.max_pos),
+                                       str.tostring(i_max_pos),    i_max_pos == sug.max_pos)
+
+// =====================================================================
+// SESSION / WEEKDAY R BREAKDOWN PANEL
+// Data-driven attribution of realized R + trade count to the session and
+// the weekday each trade OPENED in (buckets accrued in compute_sig_state
+// at the SAME close branches as sim_total_r). Σ(weekday R) == gross Total
+// R always; Σ(session R) == gross Total R whenever every trade opened
+// inside a killzone (off-session opens carry a session idx of -1 and land
+// in no session bucket). Opt-in (default OFF). 3 cols: label | R | n.
+// =====================================================================
+var table bd_tbl = table.new(pos_lookup(i_bd_pos), 3, 16,
+                             bgcolor      = color.new(color.black, 20),
+                             border_color = color.new(color.gray, 50),
+                             border_width = 1,
+                             frame_color  = color.new(color.gray, 50),
+                             frame_width  = 1)
+
+f_bd_hdr(int _r, string _c0, string _c1, string _c2) =>
+    table.cell(bd_tbl, 0, _r, _c0, text_color=color.new(#ffd54f, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(bd_tbl, 1, _r, _c1, text_color=color.new(#ffd54f, 0), text_size=size.small, text_halign=text.align_right)
+    table.cell(bd_tbl, 2, _r, _c2, text_color=color.new(#ffd54f, 0), text_size=size.small, text_halign=text.align_right)
+
+f_bd_row(int _r, string _name, float _rval, int _n) =>
+    table.cell(bd_tbl, 0, _r, _name, text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.cell(bd_tbl, 1, _r, str.tostring(_rval, "+0.00") + "R",
+                              text_color = _n == 0 ? color.gray : _rval >= 0 ? color.lime : color.red,
+                              text_size=size.small, text_halign=text.align_right)
+    table.cell(bd_tbl, 2, _r, str.tostring(_n),
+                              text_color = _n == 0 ? color.gray : color.silver,
+                              text_size=size.small, text_halign=text.align_right)
+
+if i_show_breakdown and barstate.islast
+    table.clear(bd_tbl, 0, 0, 2, 15)
+
+    // -- Session section (index 0..4 = Asia/London/NYAM/NYLU/NYPM) --
+    f_bd_hdr(0, "BY SESSION", "R", "n")
+    f_bd_row(1, "Asia",     array.get(r_by_sess, 0), array.get(n_by_sess, 0))
+    f_bd_row(2, "London",   array.get(r_by_sess, 1), array.get(n_by_sess, 1))
+    f_bd_row(3, "NY AM",    array.get(r_by_sess, 2), array.get(n_by_sess, 2))
+    f_bd_row(4, "NY Lunch", array.get(r_by_sess, 3), array.get(n_by_sess, 3))
+    f_bd_row(5, "NY PM",    array.get(r_by_sess, 4), array.get(n_by_sess, 4))
+
+    // -- Weekday section (slot 0..6 = Mon..Sun; dayofweek 1..7 = Sun..Sat
+    //    mapped via slot = (dow + 5) % 7) --
+    f_bd_hdr(7, "BY WEEKDAY", "R", "n")
+    f_bd_row(8,  "Mon", array.get(r_by_dow, 0), array.get(n_by_dow, 0))
+    f_bd_row(9,  "Tue", array.get(r_by_dow, 1), array.get(n_by_dow, 1))
+    f_bd_row(10, "Wed", array.get(r_by_dow, 2), array.get(n_by_dow, 2))
+    f_bd_row(11, "Thu", array.get(r_by_dow, 3), array.get(n_by_dow, 3))
+    f_bd_row(12, "Fri", array.get(r_by_dow, 4), array.get(n_by_dow, 4))
+    f_bd_row(13, "Sat", array.get(r_by_dow, 5), array.get(n_by_dow, 5))
+    f_bd_row(14, "Sun", array.get(r_by_dow, 6), array.get(n_by_dow, 6))
+
+// =====================================================================
+// ALERTS
+// =====================================================================
+new_bull_forming = bull_forming and not bull_forming[1]
+new_bear_forming = bear_forming and not bear_forming[1]
+alertcondition(new_bull_forming, "BG BUY watch",  "BG Golden:BUY setup forming (waiting for retrace)")
+alertcondition(new_bear_forming, "BG SELL watch", "BG Golden:SELL setup forming (waiting for retrace)")
+alertcondition(bull_setup, "BG BUY setup",  "BG Golden:BUY setup detected")
+alertcondition(bear_setup, "BG SELL setup", "BG Golden:SELL setup detected")
+alertcondition(just_opened_long,  "Sim LONG opened",  "BG Golden:simulated LONG entry")
+alertcondition(just_opened_short, "Sim SHORT opened", "BG Golden:simulated SHORT entry")
+alertcondition(just_hit_tp1,      "TP1 hit",          "BG Golden:TP1 filled")
+alertcondition(just_hit_tp2,      "TP2 hit",          "BG Golden:TP2 filled")
+alertcondition(just_hit_tp3,      "TP3 hit",          "BG Golden:TP3 filled")
+alertcondition(just_closed_long or just_closed_short, "Trade closed", "BG Golden:trade closed")
+
+// =====================================================================
+// DATA WINDOW PLOTS
+// =====================================================================
+plot(active_count, "Active count", color=color.new(color.white, 100), display=display.data_window)
+plot(sim_total_r,  "Total Return", color=color.new(color.white, 100), display=display.data_window)
+plot(day_r_now,    "Day R",        color=color.new(color.white, 100), display=display.data_window)
