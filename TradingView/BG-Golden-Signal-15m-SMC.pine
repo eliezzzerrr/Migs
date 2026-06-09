@@ -370,6 +370,8 @@ type SigState
     float  gross_loss_r   = 0.0
     int    max_loss_streak = 0
     int    max_win_streak  = 0
+    int    cur_win_streak  = 0
+    int    cur_loss_streak = 0
     float  sum_spread_r   = 0.0
     float  sum_mfe_r      = 0.0
     float  sum_mae_r      = 0.0
@@ -1394,6 +1396,8 @@ compute_sig_state() =>
     s.gross_loss_r     := gross_loss_r
     s.max_loss_streak  := max_loss_streak
     s.max_win_streak   := max_win_streak
+    s.cur_win_streak   := cur_win_streak
+    s.cur_loss_streak  := cur_loss_streak
     s.sum_spread_r     := sum_spread_r
     s.sum_mfe_r        := sum_mfe_r
     s.sum_mae_r        := sum_mae_r
@@ -1481,6 +1485,8 @@ gross_win_r      = st.gross_win_r
 gross_loss_r     = st.gross_loss_r
 max_loss_streak  = st.max_loss_streak
 max_win_streak   = st.max_win_streak
+cur_win_streak   = st.cur_win_streak
+cur_loss_streak  = st.cur_loss_streak
 sum_spread_r     = st.sum_spread_r
 sum_mfe_r        = st.sum_mfe_r
 sum_mae_r        = st.sum_mae_r
@@ -2046,7 +2052,7 @@ pos_lookup(string s) =>
         "bottom_left"  => position.bottom_left
         => position.bottom_right
 
-var table tbl = table.new(pos_lookup(i_tbl_pos), 2, 29,
+var table tbl = table.new(pos_lookup(i_tbl_pos), 2, 30,
                           bgcolor      = color.new(color.black, 20),
                           border_color = color.new(color.gray, 50),
                           border_width = 1,
@@ -2193,10 +2199,10 @@ if i_show_tbl and barstate.islast
     if i_max_pos > 1
         add_live_clr = add_reason_s == "READY (will fire)" ? color.lime :
           add_reason_s == "" ? color.gray : color.orange
-        f_cell(27, 0, "Add #" + str.tostring(active_count + 1), color.white)
-        f_cell(27, 1, add_reason_s == "" ? "—" : add_reason_s, add_live_clr)
-        f_cell(28, 0, "Last skip", color.white)
-        f_cell(28, 1, last_add_skip_s, last_add_skip_s == "—" ? color.gray : color.orange)
+        f_cell(28, 0, "Add #" + str.tostring(active_count + 1), color.white)
+        f_cell(28, 1, add_reason_s == "" ? "—" : add_reason_s, add_live_clr)
+        f_cell(29, 0, "Last skip", color.white)
+        f_cell(29, 1, last_add_skip_s, last_add_skip_s == "—" ? color.gray : color.orange)
 
     // Trades — merged count + win-rate into one row (mirrors the "Day" row
     // style below). wr reuses the SAME formula/format and zero-guard the old
@@ -2250,36 +2256,45 @@ if i_show_tbl and barstate.islast
     f_cell(13, 1, str.tostring(max_win_streak), color.silver)
     f_cell(14, 0, "Max Consec L", color.white)
     f_cell(14, 1, str.tostring(max_loss_streak), color.silver)
-    f_cell(15, 0, "Avg MFE R", color.white)
-    f_cell(15, 1, str.tostring(avg_mfe_r, "+0.00") + "R", color.silver)
+    // Current streak — NBA-style "W5" / "L3" of the active run. At most one of
+    // cur_win/cur_loss is non-zero (the other is reset on each close), so the
+    // non-zero one IS the live streak; "—" when no trades have resolved.
+    streak_txt = cur_win_streak > 0 ? "W" + str.tostring(cur_win_streak) :
+      cur_loss_streak > 0 ? "L" + str.tostring(cur_loss_streak) : "—"
+    streak_clr = cur_win_streak > 0 ? i_col_buy :
+      cur_loss_streak > 0 ? i_col_sell : color.gray
+    f_cell(15, 0, "Streak", color.white)
+    f_cell(15, 1, streak_txt, streak_clr)
+    f_cell(16, 0, "Avg MFE R", color.white)
+    f_cell(16, 1, str.tostring(avg_mfe_r, "+0.00") + "R", color.silver)
     // Avg MAE R is the worst ADVERSE excursion (per-trade mae_r ≤ 0), so the
     // average is ≤ 0 and the "+0.00" format renders the true leading '-'.
-    f_cell(16, 0, "Avg MAE R", color.white)
-    f_cell(16, 1, str.tostring(avg_mae_r, "+0.00") + "R", color.silver)
+    f_cell(17, 0, "Avg MAE R", color.white)
+    f_cell(17, 1, str.tostring(avg_mae_r, "+0.00") + "R", color.silver)
 
-    f_cell(17, 0, "Day R (PHT)", color.white)
-    f_cell(17, 1, str.tostring(day_r_now, "+0.00") + "R",
+    f_cell(18, 0, "Day R (PHT)", color.white)
+    f_cell(18, 1, str.tostring(day_r_now, "+0.00") + "R",
                   day_r_now >= 0 ? color.lime : color.red)
 
     day_usd_disp = day_usd_now * usd_mult
-    f_cell(18, 0, "Day $ (PHT)", color.white)
-    f_cell(18, 1, (day_usd_disp >= 0 ? "+" : "") + str.tostring(day_usd_disp, "#.##"),
+    f_cell(19, 0, "Day $ (PHT)", color.white)
+    f_cell(19, 1, (day_usd_disp >= 0 ? "+" : "") + str.tostring(day_usd_disp, "#.##"),
                   day_usd_disp >= 0 ? i_col_buy : i_col_sell)
 
     // Max DD $ — worst realized peak-to-trough decline of the cumulative
     // equity curve, in account dollars (raw points × lot multiplier).
     // Shown as a negative magnitude (a loss). Default lot reproduces raw pts.
     max_dd_disp = max_dd_pts * usd_mult
-    f_cell(19, 0, "Max DD $", color.white)
-    f_cell(19, 1, "-" + str.tostring(max_dd_disp, "#.##"), i_col_sell)
+    f_cell(20, 0, "Max DD $", color.white)
+    f_cell(20, 1, "-" + str.tostring(max_dd_disp, "#.##"), i_col_sell)
 
     // Day — merged trades + WR into one row. day_wr reuses the SAME formula
     // and "0.0" format as the old "Day WR" row; the "—"/0.0% guard at zero
     // trades is preserved inside the merged string.
     day_wr = day_count_now > 0 ? day_wins_now * 100.0 / day_count_now : 0.0
     day_wr_str = day_count_now > 0 ? str.tostring(day_wr, "0.0") + "%" : "—"
-    f_cell(20, 0, "Day", color.white)
-    f_cell(20, 1, str.tostring(day_count_now) + " (" + str.tostring(day_wins_now) +
+    f_cell(21, 0, "Day", color.white)
+    f_cell(21, 1, str.tostring(day_count_now) + " (" + str.tostring(day_wins_now) +
                   "W/" + str.tostring(day_losses_now) + "L · " + day_wr_str + ")",
                   day_count_now > 0 ? color.white : color.gray)
 
@@ -2287,24 +2302,24 @@ if i_show_tbl and barstate.islast
     sim_range_str = na(sim_first_time) or na(sim_last_time) ? "—" :
       str.format_time(sim_first_time, "yyyy-MM-dd", "Asia/Manila") + " → " +
       str.format_time(sim_last_time,  "yyyy-MM-dd", "Asia/Manila")
-    f_cell(21, 0, "Sim Range", color.white)
-    f_cell(21, 1, sim_range_str, color.silver)
+    f_cell(22, 0, "Sim Range", color.white)
+    f_cell(22, 1, sim_range_str, color.silver)
 
     if active_count > 0
         sl_tag = sim_eff_sl_r >= 2.0 ? " (TP2)" :
           sim_eff_sl_r >= 1.0 ? " (TP1)" :
           sim_eff_sl_r >= 0.0 ? " (BE)"  : ""
-        f_cell(22, 0, "Dir (latest)", color.white)
-        f_cell(22, 1, sim_long ? "BUY" : "SELL", sim_long ? color.lime : color.red)
-        f_cell(23, 0, "Entry",   color.white)
-        f_cell(23, 1, str.tostring(sim_entry, format.mintick), color.white)
-        f_cell(24, 0, "SL" + sl_tag, color.white)
-        f_cell(24, 1, str.tostring(sim_eff_sl, format.mintick),
+        f_cell(23, 0, "Dir (latest)", color.white)
+        f_cell(23, 1, sim_long ? "BUY" : "SELL", sim_long ? color.lime : color.red)
+        f_cell(24, 0, "Entry",   color.white)
+        f_cell(24, 1, str.tostring(sim_entry, format.mintick), color.white)
+        f_cell(25, 0, "SL" + sl_tag, color.white)
+        f_cell(25, 1, str.tostring(sim_eff_sl, format.mintick),
                        sim_eff_sl_r >= 0 ? i_col_be : color.red)
-        f_cell(25, 0, "TP1" + (sim_tp1_done ? " ✓" : ""), color.white)
-        f_cell(25, 1, str.tostring(sim_tp1, format.mintick), sim_tp1_done ? color.gray : color.lime)
-        f_cell(26, 0, final_tp_lbl + " (final)", color.white)
-        f_cell(26, 1, str.tostring(final_tp_price, format.mintick), color.lime)
+        f_cell(26, 0, "TP1" + (sim_tp1_done ? " ✓" : ""), color.white)
+        f_cell(26, 1, str.tostring(sim_tp1, format.mintick), sim_tp1_done ? color.gray : color.lime)
+        f_cell(27, 0, final_tp_lbl + " (final)", color.white)
+        f_cell(27, 1, str.tostring(final_tp_price, format.mintick), color.lime)
 
 // =====================================================================
 // TUNING SUGGESTIONS PANEL
