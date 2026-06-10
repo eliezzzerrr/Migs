@@ -200,6 +200,12 @@ i_show_breakdown = input.bool(true, "Show session/weekday R breakdown", group=g_
      tooltip="Optional panel attributing realized R and trade count to the session and the weekday each trade OPENED in (data-driven from the sim itself, no priors). Σ(session R)=Σ(weekday R)=gross Total R. Default OFF.")
 i_bd_pos    = input.string("bottom_left", "Breakdown panel position",
                            options=["top_left","top_right","middle_left","middle_right","bottom_left","bottom_right"], group=g_disp)
+i_near_tp2  = input.float(1.8, "Near-miss threshold (R)", minval=1.0, maxval=2.0, step=0.05, group=g_disp,
+     tooltip="DISPLAY-ONLY (does NOT affect the trade engine). In the PERFORMANCE band's outcome-anatomy rows, a losing trade whose per-trade MFE reached at least this many R is classified as a 'near TP2' loss (came within a hair of the +2R target, then reversed to SL). Losses with MFE between 1.0R and this threshold are 'after TP1'; below 1.0R are 'straight to SL'. Raise toward 2.0 to count only the closest misses; lower toward 1.0 to be more generous.")
+i_show_sess = input.bool(true, "Show session stats", group=g_disp,
+     tooltip="DISPLAY-ONLY. Adds the SESSIONS band to the status table (between PERFORMANCE and STREAKS): entry-quality WR per killzone (Asia/London/NY, NY*=AM|Lunch|PM merged), resolution-path breakdown (where Asia/London/NY entries CLOSE — same PHT day vs later/off), avg hold split by win/loss, same-session-close rate, and overnight-carry rate. When OFF the whole band is hidden and occupies no table rows.")
+i_show_dow  = input.bool(false, "Show day-of-week stats", group=g_disp,
+     tooltip="DISPLAY-ONLY. Adds 5 Mon–Fri rows (by ENTRY day, PHT) to the SESSIONS band showing W/L and win-rate. Requires 'Show session stats' ON. When OFF the rows are hidden and occupy no table space.")
 
 g_sug       = "Tuning Suggestions"
 i_show_sug  = input.bool(false,  "Show tuning suggestions panel",  group=g_sug,
@@ -307,6 +313,7 @@ type Trade
     bool   tp2_done      = false
     bool   tp3_done      = false
     int    open_bar      = 0
+    int    open_time     = na
     int    open_day      = 0
     int    open_month    = 0
     // OB origin bar this position opened from. Used by the one-position-per-OB
@@ -320,6 +327,15 @@ type Trade
     // open_dow: raw Pine dayofweek (1=Sun..7=Sat) at the open bar, Asia/Manila.
     int    open_sess_idx = -1
     int    open_dow      = 0
+    // SESSIONS-band attribution captured AT OPEN (display-only).
+    // open_sess_bucket: which killzone permitted the entry, NY* merged:
+    //   0=Asia, 1=London, 2=NY (NYAM|NYLU|NYPM), -1=off (sessions disabled).
+    //   Derived from open_sess_idx (the engine's in-session idx at entry) —
+    //   NOT recomputed from session membership.
+    // open_pht_date: PHT calendar-date key (y*10000+m*100+d, Asia/Manila) at
+    //   the open bar, for same-day close detection in the resolution paths.
+    int    open_sess_bucket = -1
+    int    open_pht_date    = na
 
 // =====================================================================
 // SIGNAL-STATE UDT — bundles everything compute_sig_state() returns
@@ -375,6 +391,16 @@ type SigState
     float  sum_spread_r   = 0.0
     float  sum_mfe_r      = 0.0
     float  sum_mae_r      = 0.0
+    // Outcome-anatomy counters (display-only). Each CLOSED trade is binned
+    // into exactly one of 4 mutually-exclusive buckets at close time using
+    // the existing win/loss attribution + per-trade MFE (in R). Their sum ==
+    // closed_count. sum_hold_ms accrues (close bar time − open_time) per
+    // closed trade for the average-hold display.
+    int    n_win_tp2      = 0   // booked a WIN (TP2 final / trailed-SL win)
+    int    n_loss_near    = 0   // loss, MFE_R >= i_near_tp2 (hairline miss)
+    int    n_loss_aftertp1 = 0  // loss, 1.0 <= MFE_R < i_near_tp2
+    int    n_loss_straight = 0  // loss, MFE_R < 1.0
+    int    sum_hold_ms    = 0
     // Day aggregates (PHT open-day attribution)
     float  day_r_today      = 0.0
     float  day_usd_today    = 0.0
@@ -433,6 +459,31 @@ type SigState
     array<int>   n_by_sess = na
     array<float> r_by_dow  = na
     array<int>   n_by_dow  = na
+    // -- SESSIONS band (display-only). All accrued in the SAME close branches
+    //    as wins/losses (trailed-SL eff R>=0 = WIN attribution preserved). --
+    // Entry quality, indexed 0=Asia,1=London,2=NY (NY*=AM|Lunch|PM merged):
+    //   entries = closed trades opened in that bucket; wins = WINs among them.
+    array<int>   ent_by_bucket = na   // [3]
+    array<int>   ent_wins_by_bucket = na   // [3]
+    // Resolution paths, 8 buckets (every closed trade lands in exactly one):
+    //   0 Asia→inAsia   1 Asia→inLondon   2 Asia→later/off
+    //   3 London→inLondon 4 London→inNY    5 London→later/off
+    //   6 NY→inNY        7 NY→later/off
+    //   path_n = trades on the path; path_w = WINs on the path.
+    array<int>   path_n = na   // [8]
+    array<int>   path_w = na   // [8]
+    // Hold-time split (ms + count) for wins vs losses (WIN attribution = same
+    // as sim_wins, i.e. trailed-SL eff R>=0 counts as a win).
+    int    hold_ms_wins   = 0
+    int    hold_ms_losses = 0
+    int    n_hold_wins    = 0
+    int    n_hold_losses  = 0
+    // Same-session-AND-same-day closes, and overnight-carry closes.
+    int    n_same_sess_close = 0
+    int    n_overnight       = 0
+    // Day-of-week (ENTRY day, PHT) W/L, slot 0..4 = Mon..Fri.
+    array<int>   dow_w = na   // [5]
+    array<int>   dow_l = na   // [5]
 
 // =====================================================================
 // SUGGESTIONS UDT + lookup function. Holds the per-TF starting-point
@@ -786,6 +837,19 @@ compute_sig_state() =>
     var float sum_mfe_r       = 0.0   // Σ best favorable excursion (R) per trade
     var float sum_mae_r       = 0.0   // Σ worst adverse excursion (R, ≤0) per trade
 
+    // -- Outcome-anatomy counters (display-only). Each CLOSED trade is binned
+    //    into exactly one of 4 mutually-exclusive buckets at close time, using
+    //    the SAME win/loss attribution as sim_wins/sim_losses plus the trade's
+    //    per-trade MFE (already in R). Σ(4 buckets) == sim_wins + sim_losses
+    //    always. sum_hold_ms accrues wall-clock hold (close time − open_time)
+    //    per closed trade. Mutated only inside the close branches → never
+    //    touches entries/exits/sizing/alerts. --
+    var int   n_win_tp2       = 0     // booked a WIN (TP-final or trailed-SL win)
+    var int   n_loss_near     = 0     // loss, MFE_R >= i_near_tp2 (hairline miss)
+    var int   n_loss_aftertp1 = 0     // loss, 1.0 <= MFE_R < i_near_tp2
+    var int   n_loss_straight = 0     // loss, MFE_R < 1.0
+    var int   sum_hold_ms     = 0
+
     // -- Session / weekday R-breakdown buckets. Realized R + trade count
     //    attributed to the session and weekday each trade OPENED in. Mutated
     //    in the SAME close branches as sim_total_r so they can never drift
@@ -798,6 +862,24 @@ compute_sig_state() =>
     var array<int>   n_by_sess = array.new<int>(5, 0)
     var array<float> r_by_dow  = array.new<float>(7, 0.0)
     var array<int>   n_by_dow  = array.new<int>(7, 0)
+
+    // -- SESSIONS-band counters (display-only). Mutated ONLY inside the close
+    //    branches, alongside the existing win/loss booking, so the WIN
+    //    attribution (trailed-SL eff R>=0 = WIN) is identical everywhere.
+    //    A single close helper (book_session_stats below) writes all of these
+    //    from the closing Trade so the math lives once. --
+    var array<int> ent_by_bucket      = array.new<int>(3, 0)  // Asia/London/NY
+    var array<int> ent_wins_by_bucket = array.new<int>(3, 0)
+    var array<int> path_n             = array.new<int>(8, 0)
+    var array<int> path_w             = array.new<int>(8, 0)
+    var int hold_ms_wins      = 0
+    var int hold_ms_losses    = 0
+    var int n_hold_wins       = 0
+    var int n_hold_losses     = 0
+    var int n_same_sess_close = 0
+    var int n_overnight       = 0
+    var array<int> dow_w = array.new<int>(5, 0)  // Mon..Fri
+    var array<int> dow_l = array.new<int>(5, 0)
 
     // Realized-equity drawdown (raw points). Tracks the running cumulative
     // sim_total_usd curve: dd_peak_pts is the high-water mark, max_dd_pts
@@ -983,6 +1065,16 @@ compute_sig_state() =>
       in_kz_nypm   ? 4 :
       in_kz_asia   ? 0 : -1
 
+    // SESSIONS-band entry bucket (NY* merged): derived from sess_idx_now, NOT
+    // recomputed — 0=Asia, 1=London, 2=NY(AM|Lunch|PM), -1=off. Captured into
+    // the Trade at open for the entry-quality + resolution-path stats.
+    sess_bucket_now = sess_idx_now == 0 ? 0 :
+      sess_idx_now == 1 ? 1 :
+      sess_idx_now >= 2 ? 2 : -1
+    // PHT calendar-date key of the (potential) open bar, for same-day close
+    // detection. day_today/month_today already in Asia/Manila; add the year.
+    open_pht_date_now = year(time, "Asia/Manila") * 10000 + month_today * 100 + day_today
+
     // -- Per-bar event flags (local; not var — reset each bar) --
     evt_open_long      = false
     evt_open_short     = false
@@ -1064,11 +1156,14 @@ compute_sig_state() =>
                     t.tp2_done   := false
                     t.tp3_done   := false
                     t.open_bar     := bar_index
+                    t.open_time    := time
                     t.open_day     := day_today
                     t.open_month   := month_today
                     t.bias_at_open := h1_bias_s
                     t.open_sess_idx := sess_idx_now
                     t.open_dow      := bar_dow
+                    t.open_sess_bucket := sess_bucket_now
+                    t.open_pht_date    := open_pht_date_now
                     t.ob_bar        := ob_bar
                     array.push(active_trades, t)
                     sim_count       += 1
@@ -1096,11 +1191,14 @@ compute_sig_state() =>
                     t.tp2_done   := false
                     t.tp3_done   := false
                     t.open_bar     := bar_index
+                    t.open_time    := time
                     t.open_day     := day_today
                     t.open_month   := month_today
                     t.bias_at_open := h1_bias_s
                     t.open_sess_idx := sess_idx_now
                     t.open_dow      := bar_dow
+                    t.open_sess_bucket := sess_bucket_now
+                    t.open_pht_date    := open_pht_date_now
                     t.ob_bar        := ob_bar
                     array.push(active_trades, t)
                     sim_count        += 1
@@ -1128,6 +1226,11 @@ compute_sig_state() =>
                 continue
             opened_today = t.open_day == day_today and t.open_month == month_today
             closed_now   = false
+            // SESSIONS band: per-trade WIN flag for this close (set in each
+            // close branch with the SAME attribution as sim_wins/sim_losses;
+            // trailed-SL with eff R>=0 is a WIN). Booked once below before
+            // array.remove via the inline session-stats block.
+            bool was_win = false
             // -- MFE / MAE update (in R), BEFORE this bar's TP/SL resolution.
             //    Normalized by the trade's ORIGINAL risk (entry→initial SL).
             //    mfe_r = best favorable excursion seen; mae_r = worst adverse
@@ -1196,6 +1299,10 @@ compute_sig_state() =>
                         sum_spread_r += i_spread / risk_pts
                     sum_mfe_r += t.mfe_r
                     sum_mae_r += t.mae_r
+                    // Outcome anatomy: TP-final → WIN bucket; accrue hold time.
+                    n_win_tp2  += 1
+                    was_win    := true
+                    sum_hold_ms += time - t.open_time
                     if opened_today
                         day_r_today    += win_r_tp1
                         day_usd_today  += usd_pnl
@@ -1236,6 +1343,10 @@ compute_sig_state() =>
                         sum_spread_r += i_spread / risk_pts
                     sum_mfe_r += t.mfe_r
                     sum_mae_r += t.mae_r
+                    // Outcome anatomy: TP-final → WIN bucket; accrue hold time.
+                    n_win_tp2  += 1
+                    was_win    := true
+                    sum_hold_ms += time - t.open_time
                     if opened_today
                         day_r_today    += win_r_tp2
                         day_usd_today  += usd_pnl
@@ -1282,6 +1393,10 @@ compute_sig_state() =>
                         sum_spread_r += i_spread / risk_pts
                     sum_mfe_r += t.mfe_r
                     sum_mae_r += t.mae_r
+                    // Outcome anatomy: TP-final → WIN bucket; accrue hold time.
+                    n_win_tp2  += 1
+                    was_win    := true
+                    sum_hold_ms += time - t.open_time
                     if opened_today
                         day_r_today    += win_r_tp3
                         day_usd_today  += usd_pnl
@@ -1317,6 +1432,7 @@ compute_sig_state() =>
                 // Only an untrailed SL hit (original level, eff_sl_r = -1)
                 // counts as a true loss.
                 sl_was_trailed = t.eff_sl_r >= 0
+                was_win = sl_was_trailed
                 if sl_was_trailed
                     sim_wins += 1
                 else
@@ -1340,6 +1456,21 @@ compute_sig_state() =>
                     sum_spread_r += i_spread / risk_pts
                 sum_mfe_r += t.mfe_r
                 sum_mae_r += t.mae_r
+                // -- Outcome anatomy (SL close). A trailed SL counts as a WIN
+                //    (parity with sim_wins above, per spec). An untrailed SL is
+                //    a true loss → binned by the trade's per-trade MFE (already
+                //    in R): >= i_near_tp2 = hairline near-TP2 miss; [1.0, near)
+                //    = reached TP1 then reversed; < 1.0 = straight to SL. Σ(4
+                //    buckets) == sim_wins + sim_losses. Accrue hold time once. --
+                if sl_was_trailed
+                    n_win_tp2 += 1
+                else if t.mfe_r >= i_near_tp2
+                    n_loss_near += 1
+                else if t.mfe_r >= 1.0
+                    n_loss_aftertp1 += 1
+                else
+                    n_loss_straight += 1
+                sum_hold_ms += time - t.open_time
                 if opened_today
                     day_r_today   += r_realized
                     day_usd_today += usd_pnl
@@ -1353,6 +1484,76 @@ compute_sig_state() =>
                     evt_close_short_sl := true
                 sim_close_bar := bar_index
                 closed_now    := true
+            // -- SESSIONS band booking (display-only). One block, runs once per
+            //    closed trade. close_bucket = the CLOSING bar's PHT time-of-day
+            //    classified by session TIME WINDOWS ONLY (DoW enablement
+            //    ignored), NY* merged: 0=Asia,1=London,2=NY,-1=OFF. Reuses the
+            //    in_kz_* flags computed for THIS bar at the entry gate (time()
+            //    membership; no DoW mask), same NYAM>London>NYLU>NYPM>Asia
+            //    priority as the engine's session_now, then NY*→NY. --
+            if closed_now
+                int close_bucket = in_kz_nyam   ? 2 :
+                  in_kz_london ? 1 :
+                  in_kz_nylu   ? 2 :
+                  in_kz_nypm   ? 2 :
+                  in_kz_asia   ? 0 : -1
+                // PHT calendar date of the close bar, for same-day comparison.
+                int close_pht_date = year(time, "Asia/Manila") * 10000 +
+                  month(time, "Asia/Manila") * 100 + dayofmonth(time, "Asia/Manila")
+                bool same_day = not na(t.open_pht_date) and close_pht_date == t.open_pht_date
+                bool overnight = not na(t.open_pht_date) and close_pht_date > t.open_pht_date
+                eb = t.open_sess_bucket   // 0=Asia,1=London,2=NY,-1=off
+                // Entry-quality counters (skip off-session entries: eb<0).
+                if eb >= 0
+                    array.set(ent_by_bucket, eb, array.get(ent_by_bucket, eb) + 1)
+                    if was_win
+                        array.set(ent_wins_by_bucket, eb, array.get(ent_wins_by_bucket, eb) + 1)
+                // Resolution path. "→ in X" requires same PHT day (Asia/London).
+                // NY exception: "→ in NY" = close within 24h of open AND close
+                // bucket == NY (the NY Lunch/PM windows fall on the next PHT
+                // calendar day after an evening NY AM entry, so a strict same-day
+                // rule would misclassify them). 86400000 ms = 24h.
+                bool within_24h = (time - t.open_time) <= 86400000
+                // Resolution path index (0..7), -1 = off-session entry. Nested
+                // if (not a nested ternary) so the parser is never ambiguous.
+                int path = -1
+                if eb == 0          // Asia entry
+                    path := same_day and close_bucket == 0 ? 0 :
+                      same_day and close_bucket == 1 ? 1 : 2
+                else if eb == 1     // London entry
+                    path := same_day and close_bucket == 1 ? 3 :
+                      same_day and close_bucket == 2 ? 4 : 5
+                else if eb == 2     // NY entry (24h same-trading-day rule)
+                    path := within_24h and close_bucket == 2 ? 6 : 7
+                if path >= 0
+                    array.set(path_n, path, array.get(path_n, path) + 1)
+                    if was_win
+                        array.set(path_w, path, array.get(path_w, path) + 1)
+                // Hold-time split (wins vs losses).
+                hold_ms = time - t.open_time
+                if was_win
+                    hold_ms_wins += hold_ms
+                    n_hold_wins  += 1
+                else
+                    hold_ms_losses += hold_ms
+                    n_hold_losses  += 1
+                // Same-session close = closed in the SAME killzone bucket AND
+                // same PHT day as entry (eb>=0 required; off-session entries
+                // have no killzone to match).
+                if eb >= 0 and same_day and close_bucket == eb
+                    n_same_sess_close += 1
+                // Overnight carry = close PHT date strictly after open PHT date.
+                if overnight
+                    n_overnight += 1
+                // Day-of-week (ENTRY day) W/L. open_dow is Pine dayofweek
+                // (1=Sun..7=Sat); Mon..Fri → slot 0..4 via (dow+5)%7, which is
+                // 0..4 only for Mon..Fri (Sat=5, Sun=6 → skipped).
+                int dslot = (t.open_dow + 5) % 7
+                if dslot >= 0 and dslot <= 4
+                    if was_win
+                        array.set(dow_w, dslot, array.get(dow_w, dslot) + 1)
+                    else
+                        array.set(dow_l, dslot, array.get(dow_l, dslot) + 1)
             if closed_now
                 array.remove(active_trades, idx)
 
@@ -1422,6 +1623,11 @@ compute_sig_state() =>
     s.sum_spread_r     := sum_spread_r
     s.sum_mfe_r        := sum_mfe_r
     s.sum_mae_r        := sum_mae_r
+    s.n_win_tp2        := n_win_tp2
+    s.n_loss_near      := n_loss_near
+    s.n_loss_aftertp1  := n_loss_aftertp1
+    s.n_loss_straight  := n_loss_straight
+    s.sum_hold_ms      := sum_hold_ms
     s.day_r_today      := day_r_today
     s.day_usd_today    := day_usd_today
     s.day_wins_today   := day_wins_today
@@ -1465,6 +1671,18 @@ compute_sig_state() =>
     s.n_by_sess           := n_by_sess
     s.r_by_dow            := r_by_dow
     s.n_by_dow            := n_by_dow
+    s.ent_by_bucket       := ent_by_bucket
+    s.ent_wins_by_bucket  := ent_wins_by_bucket
+    s.path_n              := path_n
+    s.path_w              := path_w
+    s.hold_ms_wins        := hold_ms_wins
+    s.hold_ms_losses      := hold_ms_losses
+    s.n_hold_wins         := n_hold_wins
+    s.n_hold_losses       := n_hold_losses
+    s.n_same_sess_close   := n_same_sess_close
+    s.n_overnight         := n_overnight
+    s.dow_w               := dow_w
+    s.dow_l               := dow_l
     s
 
 // =====================================================================
@@ -1512,6 +1730,11 @@ cur_loss_streak  = st.cur_loss_streak
 sum_spread_r     = st.sum_spread_r
 sum_mfe_r        = st.sum_mfe_r
 sum_mae_r        = st.sum_mae_r
+n_win_tp2        = st.n_win_tp2
+n_loss_near      = st.n_loss_near
+n_loss_aftertp1  = st.n_loss_aftertp1
+n_loss_straight  = st.n_loss_straight
+sum_hold_ms      = st.sum_hold_ms
 day_r_now        = st.day_r_today
 day_usd_now      = st.day_usd_today
 day_wins_now     = st.day_wins_today
@@ -1606,6 +1829,20 @@ r_by_sess = st.r_by_sess
 n_by_sess = st.n_by_sess
 r_by_dow  = st.r_by_dow
 n_by_dow  = st.n_by_dow
+
+// SESSIONS-band counters (consumed by the status-table SESSIONS band).
+ent_by_bucket      = st.ent_by_bucket
+ent_wins_by_bucket = st.ent_wins_by_bucket
+sess_path_n        = st.path_n
+sess_path_w        = st.path_w
+hold_ms_wins       = st.hold_ms_wins
+hold_ms_losses     = st.hold_ms_losses
+n_hold_wins        = st.n_hold_wins
+n_hold_losses      = st.n_hold_losses
+n_same_sess_close  = st.n_same_sess_close
+n_overnight        = st.n_overnight
+sess_dow_w         = st.dow_w
+sess_dow_l         = st.dow_l
 
 // =====================================================================
 // CHART-SIDE DERIVATIONS — final-TP display
@@ -2075,25 +2312,61 @@ pos_lookup(string s) =>
         "bottom_left"  => position.bottom_left
         => position.bottom_right
 
-var table tbl = table.new(pos_lookup(i_tbl_pos), 2, 33,
+// =====================================================================
+// TWO SIDE-BY-SIDE label|value PAIRS (5 columns):
+//   cols 0-1 = LEFT pair  (the "now" stuff): SETUP, LIVE TRADE,
+//              TODAY, STREAKS.
+//   col  2   = thin transparent SPACER between the pairs.
+//   cols 3-4 = RIGHT pair (the "sim results"): PERFORMANCE, SESSIONS(+DoW).
+// Each pair carries its OWN amber band headers (header spans only that
+// pair's 2 cells, never all 5 columns).
+//
+// Row budget per pair — worst case (all toggles ON):
+//   LEFT  : SETUP hdr+4 (0..4) + LIVE TRADE hdr+9 (5..14) +
+//           TODAY hdr+3 (15..18) + STREAKS hdr+3 (19..22)        = 23 rows
+//   RIGHT : PERFORMANCE hdr+14 (0..14) + SESSIONS hdr+entries(3)+
+//           paths(8)+holds(2)+same(1)+overnight(1) (15..30) +
+//           DoW(5) (31..35)                                       = 36 rows
+//   table height = max(23, 36) = 36. STREAKS is STATICALLY on the LEFT
+//   (left worst case row 22 vs right's 35, so it never makes
+//   the left the tall side). The two pairs each run an INDEPENDENT running
+//   row counter (rL for left STREAKS, rR for right SESSIONS/DoW) so no
+//   toggle combo collides. table.clear wipes the full 5×36 span each render.
+var table tbl = table.new(pos_lookup(i_tbl_pos), 5, 36,
                           bgcolor      = color.new(color.black, 20),
                           border_color = color.new(color.gray, 50),
                           border_width = 1,
                           frame_color  = color.new(color.gray, 50),
                           frame_width  = 1)
 
-f_cell(int _row, int _col, string _txt, color _clr) =>
-    table.cell(tbl, _col, _row, _txt, text_color=_clr, text_size=size.small, text_halign=text.align_left)
+// LEFT pair lives in cols 0-1, RIGHT pair in cols 3-4. The f_cell pair-arg
+// is the LOCAL column (0 = label, 1 = value); callers pass a base offset.
+// _base = 0 → left pair, _base = 3 → right pair.
+f_cell(int _row, int _col, string _txt, color _clr, int _base = 0) =>
+    table.cell(tbl, _base + _col, _row, _txt, text_color=_clr, text_size=size.small, text_halign=text.align_left)
 
-// Section-header row: amber group name across col0 with a subtle tinted
-// background so the panel reads as grouped bands. col1 mirrors the tint to
-// keep the band continuous. Display-only.
-f_hdr(int _row, string _txt) =>
+// Section-header row: amber group name across the pair's label cell with a
+// subtle tinted background; the pair's value cell mirrors the tint to keep
+// the band continuous. The header spans ONLY this pair (2 cells), not all 5
+// columns. _base selects the pair (0 = left, 3 = right). Display-only.
+f_hdr(int _row, string _txt, int _base = 0) =>
     hdr_bg = color.new(#ffd54f, 88)
-    table.cell(tbl, 0, _row, _txt, text_color=color.new(#ffd54f, 0), text_size=size.small, text_halign=text.align_left, bgcolor=hdr_bg)
-    table.cell(tbl, 1, _row, "",   bgcolor=hdr_bg)
+    table.cell(tbl, _base + 0, _row, _txt, text_color=color.new(#ffd54f, 0), text_size=size.small, text_halign=text.align_left, bgcolor=hdr_bg)
+    table.cell(tbl, _base + 1, _row, "",   bgcolor=hdr_bg)
 
-title_col1_txt = "v6"
+// Duration formatter: int ms → "Xd Yh" (>=24h) else "Xh Ym". CRITICAL —
+// Pine `/` on two ints returns FLOAT (no int-division operator), so every
+// division step is math.floor'd back to a true int before str.tostring,
+// otherwise raw floats leak (decimals + thousands separator). `%` on
+// (int,int) IS int. Single source of truth for the Avg Hold rows.
+f_dur(int _ms) =>
+    int total_min  = int(math.floor(_ms / 60000.0))   // whole minutes
+    int hold_h_tot = int(math.floor(total_min / 60.0))// whole hours
+    int hold_m_rem = total_min % 60                    // int % int → int
+    int hold_days  = int(math.floor(hold_h_tot / 24.0))
+    int hold_h_rem = hold_h_tot % 24                   // int % int → int
+    hold_h_tot >= 24 ? str.tostring(hold_days) + "d " + str.tostring(hold_h_rem) + "h" :
+      str.tostring(hold_h_tot) + "h " + str.tostring(hold_m_rem) + "m"
 
 // Lot multiplier: rescales the raw-points $ accumulators (sim_total_usd,
 // day_usd_now, max_dd_pts) into account dollars at DISPLAY time only.
@@ -2110,10 +2383,7 @@ net_total_usd_pts = sim_total_usd - (closed_count * i_spread)
 net_total_usd   = net_total_usd_pts * usd_mult
 
 if i_show_tbl and barstate.islast
-    table.clear(tbl, 0, 0, 1, 32)
-
-    f_cell(0, 0, "BG GOLDEN",      color.new(#ffd54f, 0))
-    f_cell(0, 1, title_col1_txt,   color.new(#ffd54f, 0))
+    table.clear(tbl, 0, 0, 4, 35)
 
     state_str = switch
         active_count > 0          => "IN-TRADE × " + str.tostring(active_count)
@@ -2197,36 +2467,41 @@ if i_show_tbl and barstate.islast
             state_str := "OFF-SESS " + countdown
 
     // =================================================================
-    // Panel layout (top→bottom, trader check order):
-    //   SETUP/IDENTITY · LIVE TRADE · TODAY · PERFORMANCE · STREAKS
-    // Fixed row indices; conditional groups (live-trade rows, multi-pos
-    // diagnostics) leave their rows blank when idle (table.clear wipes
-    // stale text each render). Section headers are tinted bands.
+    // Panel layout — TWO side-by-side pairs:
+    //   LEFT pair  (cols 0-1): SETUP/IDENTITY · LIVE TRADE · TODAY · STREAKS
+    //   RIGHT pair (cols 3-4): PERFORMANCE · SESSIONS(+DoW)
+    //   col 2 = transparent spacer (never written).
+    // Left fixed rows use absolute indices (SETUP 0 … TODAY 18); STREAKS on
+    // the left uses running counter rL. Right uses absolute indices for
+    // PERFORMANCE (0..14); SESSIONS/DoW use running counter rR. Conditional
+    // groups (live-trade rows, multi-pos diagnostics) leave their rows blank
+    // when idle (table.clear wipes stale text each render). Headers are
+    // tinted bands spanning only their own pair.
     // =================================================================
 
-    // -- SETUP / IDENTITY ---------------------------------------------
-    f_hdr(1, "SETUP")
+    // -- SETUP / IDENTITY (LEFT pair) ---------------------------------
+    f_hdr(0, "SETUP")
 
-    f_cell(2, 0, "State",     color.white)
-    f_cell(2, 1, state_str,   state_clr)
+    f_cell(1, 0, "State",     color.white)
+    f_cell(1, 1, state_str,   state_clr)
 
     symbol_line = syminfo.ticker + " " + timeframe.period + " · " + session_now
-    f_cell(3, 0, "Symbol",    color.white)
-    f_cell(3, 1, symbol_line, color.white)
+    f_cell(2, 0, "Symbol",    color.white)
+    f_cell(2, 1, symbol_line, color.white)
 
-    f_cell(4, 0, "Slots",     color.white)
-    f_cell(4, 1, str.tostring(active_count) + " / " + str.tostring(i_max_pos),
+    f_cell(3, 0, "Slots",     color.white)
+    f_cell(3, 1, str.tostring(active_count) + " / " + str.tostring(i_max_pos),
                   active_count >= i_max_pos ? color.orange : color.silver)
 
     // Sim Range — first → last in-range bar the sim actually evaluated.
     sim_range_str = na(sim_first_time) or na(sim_last_time) ? "—" :
       str.format_time(sim_first_time, "yyyy-MM-dd", "Asia/Manila") + " → " +
       str.format_time(sim_last_time,  "yyyy-MM-dd", "Asia/Manila")
-    f_cell(5, 0, "Sim Range", color.white)
-    f_cell(5, 1, sim_range_str, color.silver)
+    f_cell(4, 0, "Sim Range", color.white)
+    f_cell(4, 1, sim_range_str, color.silver)
 
     // -- LIVE TRADE ---------------------------------------------------
-    f_hdr(6, "LIVE TRADE")
+    f_hdr(5, "LIVE TRADE")
 
     // Bias rows: when in trade, show the bias captured AT TRADE ENTRY
     // (the value the gate actually evaluated to allow the trade) AND the
@@ -2235,30 +2510,30 @@ if i_show_tbl and barstate.islast
     bias_to_show = active_count > 0 ? bias_at_open : h1_bias_s
     bias_color = bias_to_show == "bullish" ? color.lime :
       bias_to_show == "bearish" ? color.red : color.silver
-    f_cell(7, 0, active_count > 0 ? "Bias @ entry" : "Bias", color.white)
-    f_cell(7, 1, bias_to_show, bias_color)
+    f_cell(6, 0, active_count > 0 ? "Bias @ entry" : "Bias", color.white)
+    f_cell(6, 1, bias_to_show, bias_color)
 
     if active_count > 0
         bias_now_color = h1_bias_s == "bullish" ? color.lime :
           h1_bias_s == "bearish" ? color.red : color.silver
-        f_cell(8, 0, "Bias (now)", color.white)
-        f_cell(8, 1, h1_bias_s, bias_now_color)
+        f_cell(7, 0, "Bias (now)", color.white)
+        f_cell(7, 1, h1_bias_s, bias_now_color)
 
     if active_count > 0
         sl_tag = sim_eff_sl_r >= 2.0 ? " (TP2)" :
           sim_eff_sl_r >= 1.0 ? " (TP1)" :
           sim_eff_sl_r >= 0.0 ? " (BE)"  : ""
-        f_cell(9, 0, "Dir (latest)", color.white)
-        f_cell(9, 1, sim_long ? "BUY" : "SELL", sim_long ? color.lime : color.red)
-        f_cell(10, 0, "Entry",   color.white)
-        f_cell(10, 1, str.tostring(sim_entry, format.mintick), color.white)
-        f_cell(11, 0, "SL" + sl_tag, color.white)
-        f_cell(11, 1, str.tostring(sim_eff_sl, format.mintick),
+        f_cell(8, 0, "Dir (latest)", color.white)
+        f_cell(8, 1, sim_long ? "BUY" : "SELL", sim_long ? color.lime : color.red)
+        f_cell(9, 0, "Entry",   color.white)
+        f_cell(9, 1, str.tostring(sim_entry, format.mintick), color.white)
+        f_cell(10, 0, "SL" + sl_tag, color.white)
+        f_cell(10, 1, str.tostring(sim_eff_sl, format.mintick),
                        sim_eff_sl_r >= 0 ? i_col_be : color.red)
-        f_cell(12, 0, "TP1" + (sim_tp1_done ? " ✓" : ""), color.white)
-        f_cell(12, 1, str.tostring(sim_tp1, format.mintick), sim_tp1_done ? color.gray : color.lime)
-        f_cell(13, 0, final_tp_lbl + " (final)", color.white)
-        f_cell(13, 1, str.tostring(final_tp_price, format.mintick), color.lime)
+        f_cell(11, 0, "TP1" + (sim_tp1_done ? " ✓" : ""), color.white)
+        f_cell(11, 1, str.tostring(sim_tp1, format.mintick), sim_tp1_done ? color.gray : color.lime)
+        f_cell(12, 0, final_tp_lbl + " (final)", color.white)
+        f_cell(12, 1, str.tostring(final_tp_price, format.mintick), color.lime)
 
     // Diagnostic rows — only in multi-position mode (don't clutter 1-pos).
     // "Add #N" = live reason the NEXT (Nth) entry is/isn't firing this bar;
@@ -2266,95 +2541,229 @@ if i_show_tbl and barstate.islast
     if i_max_pos > 1
         add_live_clr = add_reason_s == "READY (will fire)" ? color.lime :
           add_reason_s == "" ? color.gray : color.orange
-        f_cell(14, 0, "Add #" + str.tostring(active_count + 1), color.white)
-        f_cell(14, 1, add_reason_s == "" ? "—" : add_reason_s, add_live_clr)
-        f_cell(15, 0, "Last skip", color.white)
-        f_cell(15, 1, last_add_skip_s, last_add_skip_s == "—" ? color.gray : color.orange)
+        f_cell(13, 0, "Add #" + str.tostring(active_count + 1), color.white)
+        f_cell(13, 1, add_reason_s == "" ? "—" : add_reason_s, add_live_clr)
+        f_cell(14, 0, "Last skip", color.white)
+        f_cell(14, 1, last_add_skip_s, last_add_skip_s == "—" ? color.gray : color.orange)
 
     // -- TODAY --------------------------------------------------------
-    f_hdr(16, "TODAY")
+    f_hdr(15, "TODAY")
 
     // Day — merged trades + WR into one row. day_wr reuses the SAME formula
     // and "0.0" format as the old "Day WR" row; the "—"/0.0% guard at zero
     // trades is preserved inside the merged string.
     day_wr = day_count_now > 0 ? day_wins_now * 100.0 / day_count_now : 0.0
     day_wr_str = day_count_now > 0 ? str.tostring(day_wr, "0.0") + "%" : "—"
-    f_cell(17, 0, "Day", color.white)
-    f_cell(17, 1, str.tostring(day_count_now) + " (" + str.tostring(day_wins_now) +
+    f_cell(16, 0, "Day", color.white)
+    f_cell(16, 1, str.tostring(day_count_now) + " (" + str.tostring(day_wins_now) +
                   "W/" + str.tostring(day_losses_now) + "L · " + day_wr_str + ")",
                   day_count_now > 0 ? color.white : color.gray)
 
-    f_cell(18, 0, "Day R (PHT)", color.white)
-    f_cell(18, 1, str.tostring(day_r_now, "+0.00") + "R",
+    f_cell(17, 0, "Day R (PHT)", color.white)
+    f_cell(17, 1, str.tostring(day_r_now, "+0.00") + "R",
                   day_r_now >= 0 ? color.lime : color.red)
 
     day_usd_disp = day_usd_now * usd_mult
-    f_cell(19, 0, "Day $ (PHT)", color.white)
-    f_cell(19, 1, (day_usd_disp >= 0 ? "+" : "") + str.tostring(day_usd_disp, "#.##"),
+    f_cell(18, 0, "Day $ (PHT)", color.white)
+    f_cell(18, 1, (day_usd_disp >= 0 ? "+" : "") + str.tostring(day_usd_disp, "#.##"),
                   day_usd_disp >= 0 ? i_col_buy : i_col_sell)
 
-    // -- PERFORMANCE (sim totals) -------------------------------------
-    f_hdr(20, "PERFORMANCE")
+    // -- PERFORMANCE (sim totals) — RIGHT pair (cols 3-4), rows 0..14 -----
+    f_hdr(0, "PERFORMANCE", 3)
 
     // Trades — merged count + win-rate into one row (mirrors the "Day" row
     // style). wr reuses the SAME formula/format/zero-guard as the old row.
     wr = sim_wins + sim_losses > 0 ? sim_wins * 100.0 / (sim_wins + sim_losses) : 0.0
     wr_str = str.tostring(wr, "0.0") + "%"
-    f_cell(21, 0, "Trades", color.white)
-    f_cell(21, 1, str.tostring(sim_count) + " (" + str.tostring(sim_wins) +
-                  "W/" + str.tostring(sim_losses) + "L · " + wr_str + ")", color.white)
+    f_cell(1, 0, "Trades", color.white, 3)
+    f_cell(1, 1, str.tostring(sim_count) + " (" + str.tostring(sim_wins) +
+                  "W/" + str.tostring(sim_losses) + "L · " + wr_str + ")", color.white, 3)
 
     // Avg Trades/Day = total sim trades ÷ distinct PHT weekdays with ≥1
     // in-range bar (num_trading_days, attributed on each trade's OPEN day —
     // same clock as the Day counter). Avg Trades/Week = daily × 5.
     avg_td_day  = num_trading_days > 0 ? sim_count / num_trading_days : 0.0
     avg_td_week = avg_td_day * 5.0
-    f_cell(22, 0, "Avg Trades/Day", color.white)
-    f_cell(22, 1, num_trading_days > 0 ? str.tostring(avg_td_day, "0.0") : "—",
-                  num_trading_days > 0 ? color.silver : color.gray)
-    f_cell(23, 0, "Avg Trades/Week", color.white)
-    f_cell(23, 1, num_trading_days > 0 ? str.tostring(avg_td_week, "0.0") : "—",
-                  num_trading_days > 0 ? color.silver : color.gray)
+    f_cell(2, 0, "Avg Trades/Day", color.white, 3)
+    f_cell(2, 1, num_trading_days > 0 ? str.tostring(avg_td_day, "0.0") : "—",
+                  num_trading_days > 0 ? color.silver : color.gray, 3)
+    f_cell(3, 0, "Avg Trades/Week", color.white, 3)
+    f_cell(3, 1, num_trading_days > 0 ? str.tostring(avg_td_week, "0.0") : "—",
+                  num_trading_days > 0 ? color.silver : color.gray, 3)
 
     // Total R — single R total, the NET (spread-adjusted) figure. With
     // i_spread = 0, net == gross. Sign/format/color mirror the old cell.
-    f_cell(24, 0, "Total R", color.white)
-    f_cell(24, 1, str.tostring(net_total_r, "+0.00") + "R",
-                  net_total_r >= 0 ? color.lime : color.red)
+    f_cell(4, 0, "Total R", color.white, 3)
+    f_cell(4, 1, str.tostring(net_total_r, "+0.00") + "R",
+                  net_total_r >= 0 ? color.lime : color.red, 3)
 
     // Total $ — NET (spread-adjusted) × lot multiplier. With i_spread = 0,
     // net == gross. Format/color mirror the old Net $ / Total $ cell.
-    f_cell(25, 0, "Total $", color.white)
-    f_cell(25, 1, (net_total_usd >= 0 ? "+" : "") + str.tostring(net_total_usd, "#.##"),
-                  net_total_usd >= 0 ? i_col_buy : i_col_sell)
+    f_cell(5, 0, "Total $", color.white, 3)
+    f_cell(5, 1, (net_total_usd >= 0 ? "+" : "") + str.tostring(net_total_usd, "#.##"),
+                  net_total_usd >= 0 ? i_col_buy : i_col_sell, 3)
+
+    // Lots — the basis for every $ figure above/below. Shows the lot size and
+    // the $/point it implies (usd_mult = i_lot × i_contract), so a viewer can
+    // see Total $ / Day $ / Max DD $ all scale linearly with this. Display-only.
+    f_cell(6, 0, "Lots", color.white, 3)
+    f_cell(6, 1, str.tostring(i_lot) + "  (" + str.tostring(usd_mult, "0.00") + " $/pt)", color.silver, 3)
 
     expectancy_r  = closed_count > 0 ? net_total_r / closed_count : 0.0
     profit_factor = gross_loss_r > 0 ? gross_win_r / gross_loss_r : na
 
-    f_cell(26, 0, "Expectancy R", color.white)
-    f_cell(26, 1, str.tostring(expectancy_r, "+0.00") + "R",
-                  expectancy_r > 0 ? color.lime : color.red)
+    f_cell(7, 0, "Expectancy R", color.white, 3)
+    f_cell(7, 1, str.tostring(expectancy_r, "+0.00") + "R",
+                  expectancy_r > 0 ? color.lime : color.red, 3)
 
     pf_str = na(profit_factor) ? (gross_win_r > 0 ? "∞" : "—") : str.tostring(profit_factor, "0.00")
     pf_clr = na(profit_factor) ? (gross_win_r > 0 ? color.lime : color.silver) :
       profit_factor > 1 ? color.lime : color.red
-    f_cell(27, 0, "Profit Factor", color.white)
-    f_cell(27, 1, pf_str, pf_clr)
+    f_cell(8, 0, "Profit Factor", color.white, 3)
+    f_cell(8, 1, pf_str, pf_clr, 3)
 
     // Max DD $ — worst realized peak-to-trough decline of the cumulative
     // equity curve, in account dollars (raw points × lot multiplier).
     // Shown as a negative magnitude (a loss). Default lot reproduces raw pts.
     max_dd_disp = max_dd_pts * usd_mult
-    f_cell(28, 0, "Max DD $", color.white)
-    f_cell(28, 1, "-" + str.tostring(max_dd_disp, "#.##"), i_col_sell)
+    f_cell(9, 0, "Max DD $", color.white, 3)
+    f_cell(9, 1, "-" + str.tostring(max_dd_disp, "#.##"), i_col_sell, 3)
 
-    // -- STREAKS ------------------------------------------------------
-    f_hdr(29, "STREAKS")
+    // -- Outcome anatomy: how closed trades resolve, as RATES (% of closed
+    //    trades), waterfall best→worst. n_win_tp2 + n_loss_near +
+    //    n_loss_aftertp1 + n_loss_straight == closed_count by construction, so
+    //    the four percentages sum to 100%. "—" gray until ≥1 close. A trailed-
+    //    SL win is counted in the WIN bucket (parity with the Trades W/L row).
+    pct_den   = closed_count > 0 ? closed_count : 1   // avoid /0; gated by guard
+    has_close = closed_count > 0
+    win_pct      = n_win_tp2       * 100.0 / pct_den
+    near_pct     = n_loss_near     * 100.0 / pct_den
+    aftertp1_pct = n_loss_aftertp1 * 100.0 / pct_den
+    straight_pct = n_loss_straight * 100.0 / pct_den
 
-    f_cell(30, 0, "Max Consec W", color.white)
-    f_cell(30, 1, str.tostring(max_win_streak), color.silver)
-    f_cell(31, 0, "Max Consec L", color.white)
-    f_cell(31, 1, str.tostring(max_loss_streak), color.silver)
+    f_cell(10, 0, "Win — hit TP2", color.white, 3)
+    f_cell(10, 1, has_close ? str.tostring(win_pct, "0.0") + "%" : "—",
+                  has_close ? color.lime : color.gray, 3)
+    f_cell(11, 0, "Loss — near TP2", color.white, 3)
+    f_cell(11, 1, has_close ? str.tostring(near_pct, "0.0") + "%" : "—",
+                  has_close ? color.orange : color.gray, 3)
+    f_cell(12, 0, "Loss — after TP1", color.white, 3)
+    f_cell(12, 1, has_close ? str.tostring(aftertp1_pct, "0.0") + "%" : "—",
+                  has_close ? color.red : color.gray, 3)
+    f_cell(13, 0, "Loss — straight to SL", color.white, 3)
+    f_cell(13, 1, has_close ? str.tostring(straight_pct, "0.0") + "%" : "—",
+                  has_close ? color.red : color.gray, 3)
+
+    // Avg hold = Σ(close − open) ÷ closed trades. f_dur handles int-division
+    // flooring + the d/h vs h/m format. avg_hold_ms floored once here too.
+    int avg_hold_ms = has_close ? int(math.floor(sum_hold_ms / closed_count)) : 0
+    hold_str = not has_close ? "—" : f_dur(avg_hold_ms)
+    f_cell(14, 0, "Avg Hold / Trade", color.white, 3)
+    f_cell(14, 1, hold_str, has_close ? color.silver : color.gray, 3)
+
+    // =================================================================
+    // RIGHT-pair RUNNING ROW INDEX. PERFORMANCE ends at fixed row 14
+    // (cols 3-4). The SESSIONS band (i_show_sess) and its DoW sub-rows
+    // (i_show_dow) are CONDITIONAL, so a fixed mapping would collide. From
+    // row 15 on we use counter `rR` that advances exactly once per emitted
+    // RIGHT-pair row, independent of the LEFT pair's `rL`. table.clear
+    // (above) wipes the full 5×36 span each render, so hidden rows never
+    // show stale text.
+    // =================================================================
+    int rR = 15
+
+    // -- SESSIONS (display-only; entire band hidden when i_show_sess off) ---
+    if i_show_sess
+        f_hdr(rR, "SESSIONS", 3)
+        rR += 1
+
+        // Entry quality — share of all closed trades · WR among them, per
+        // bucket. "—" (gray) for a bucket with 0 closed entries. den_close
+        // is the closed-trade denominator (>=1 guard). buckets 0/1/2 =
+        // Asia/London/NY.
+        int den_close = closed_count > 0 ? closed_count : 1
+        f_eq_label = array.from("Asia entries", "London entries", "NY entries")
+        for bi = 0 to 2
+            int e_n = array.get(ent_by_bucket, bi)
+            int e_w = array.get(ent_wins_by_bucket, bi)
+            string e_txt = e_n == 0 ? "—" :
+              str.tostring(e_n * 100.0 / den_close, "0") + "% · " +
+              str.tostring(e_w * 100.0 / e_n, "0") + "% W"
+            f_cell(rR, 0, array.get(f_eq_label, bi), color.white, 3)
+            f_cell(rR, 1, e_txt, e_n == 0 ? color.gray : color.silver, 3)
+            rR += 1
+
+        // Resolution paths — share of ALL closed trades · W% within the path.
+        // 8 paths; their n sums to closed_count by construction. "—" for an
+        // empty path. Labels index-aligned with path_n/path_w 0..7.
+        f_path_label = array.from(
+          "Asia → in Asia", "Asia → in London", "Asia → later/off",
+          "London → in London", "London → in NY", "London → later/off",
+          "NY → in NY", "NY → later/off")
+        for pi = 0 to 7
+            int p_n = array.get(sess_path_n, pi)
+            int p_w = array.get(sess_path_w, pi)
+            string p_txt = p_n == 0 ? "—" :
+              str.tostring(p_n * 100.0 / den_close, "0") + "% · " +
+              str.tostring(p_w * 100.0 / p_n, "0") + "% W"
+            f_cell(rR, 0, array.get(f_path_label, pi), color.white, 3)
+            f_cell(rR, 1, p_txt, p_n == 0 ? color.gray : color.silver, 3)
+            rR += 1
+
+        // Timing — avg hold split by win/loss (f_dur), same-session-close
+        // rate, overnight-carry rate. Hold rows floor the mean once via f_dur.
+        bool has_w = n_hold_wins > 0
+        bool has_l = n_hold_losses > 0
+        f_cell(rR, 0, "Avg Hold — wins", color.white, 3)
+        f_cell(rR, 1, has_w ? f_dur(int(math.floor(hold_ms_wins / n_hold_wins))) : "—",
+                      has_w ? color.silver : color.gray, 3)
+        rR += 1
+        f_cell(rR, 0, "Avg Hold — losses", color.white, 3)
+        f_cell(rR, 1, has_l ? f_dur(int(math.floor(hold_ms_losses / n_hold_losses))) : "—",
+                      has_l ? color.silver : color.gray, 3)
+        rR += 1
+
+        string same_txt = closed_count == 0 ? "—" :
+          str.tostring(n_same_sess_close * 100.0 / den_close, "0") + "%"
+        f_cell(rR, 0, "Same-session close", color.white, 3)
+        f_cell(rR, 1, same_txt, closed_count == 0 ? color.gray : color.silver, 3)
+        rR += 1
+        string on_txt = closed_count == 0 ? "—" :
+          str.tostring(n_overnight * 100.0 / den_close, "0") + "%"
+        f_cell(rR, 0, "Overnight carry", color.white, 3)
+        f_cell(rR, 1, on_txt, closed_count == 0 ? color.gray : color.silver, 3)
+        rR += 1
+
+        // Day-of-week WR (ENTRY day, PHT) — 5 Mon..Fri rows, opt-in. Hidden
+        // (no rows consumed) when i_show_dow off. "12W/9L · 57%" per day.
+        if i_show_dow
+            f_dow_label = array.from("Mon", "Tue", "Wed", "Thu", "Fri")
+            for di = 0 to 4
+                int d_w = array.get(sess_dow_w, di)
+                int d_l = array.get(sess_dow_l, di)
+                int d_t = d_w + d_l
+                string d_txt = d_t == 0 ? "—" :
+                  str.tostring(d_w) + "W/" + str.tostring(d_l) + "L · " +
+                  str.tostring(d_w * 100.0 / d_t, "0") + "%"
+                f_cell(rR, 0, array.get(f_dow_label, di), color.white, 3)
+                f_cell(rR, 1, d_txt, d_t == 0 ? color.gray : color.silver, 3)
+                rR += 1
+
+    // -- STREAKS — LEFT pair (cols 0-1). Statically placed below TODAY via
+    //    the LEFT running counter rL (starts at 19, right after Day $ on
+    //    row 18). Independent of the RIGHT pair's rR. Left worst case ends
+    //    at row 22 — always shorter than the right's worst case (35), so
+    //    STREAKS on the left never makes the left the tall side. ----------
+    int rL = 19
+    f_hdr(rL, "STREAKS", 0)
+    rL += 1
+
+    f_cell(rL, 0, "Max Consec W", color.white, 0)
+    f_cell(rL, 1, str.tostring(max_win_streak), color.silver, 0)
+    rL += 1
+    f_cell(rL, 0, "Max Consec L", color.white, 0)
+    f_cell(rL, 1, str.tostring(max_loss_streak), color.silver, 0)
+    rL += 1
     // Current streak — NBA-style "W5" / "L3" of the active run. At most one of
     // cur_win/cur_loss is non-zero (the other is reset on each close), so the
     // non-zero one IS the live streak; "—" when no trades have resolved.
@@ -2362,8 +2771,9 @@ if i_show_tbl and barstate.islast
       cur_loss_streak > 0 ? "L" + str.tostring(cur_loss_streak) : "—"
     streak_clr = cur_win_streak > 0 ? i_col_buy :
       cur_loss_streak > 0 ? i_col_sell : color.gray
-    f_cell(32, 0, "Streak", color.white)
-    f_cell(32, 1, streak_txt, streak_clr)
+    f_cell(rL, 0, "Streak", color.white, 0)
+    f_cell(rL, 1, streak_txt, streak_clr, 0)
+    rL += 1
 
 // =====================================================================
 // TUNING SUGGESTIONS PANEL
