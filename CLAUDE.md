@@ -39,8 +39,9 @@ Migs/
 │   ├── migs-trader.md              ← XAUUSD strategy agent
 │   └── pine-writer.md              ← Pine Script v6 specialist (TradingView)
 ├── TradingView/                    ← .pine source files
-│   ├── BG-BTC-Signals.pine
-│   └── BG-Golden-Signals.pine
+│   └── BG-Golden-Signal-15m-SMC.pine   ← THE strategy (sole survivor, 2026-06-10)
+├── EA/                             ← MT5 Expert Advisor (see EA/README.md)
+│   └── Experts/BG/BG-Golden-Signal-15m-SMC.mq5  ← Pine-parity EA (magic 20261505)
 ├── doctrine/                       ← strategy reference (loaded on demand)
 │   ├── migs-hybrid-strategy.md     ← full doctrine
 │   ├── grading-rubric.md           ← 12-point quality rubric (A+ → F, journaling only)
