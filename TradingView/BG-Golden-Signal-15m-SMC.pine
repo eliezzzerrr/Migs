@@ -384,6 +384,8 @@ type SigState
     // Sim date-range coverage (first/last in-range bar time)
     int    sim_first_time   = na
     int    sim_last_time    = na
+    // Distinct Manila weekdays with ≥1 in-range bar (Avg Trades/Day denom)
+    int    num_trading_days = 0
     // Diagnostic
     bool   h1_bull              = false
     bool   h1_bear              = false
@@ -555,7 +557,8 @@ method update_kz(KZ this) =>
                           text_color   = text_c,
                           text_halign  = text.align_center,
                           text_valign  = text.align_center,
-                          text_size    = size.large)
+                          text_size    = size.huge,
+                          text_wrap    = text.wrap_auto)
         array.unshift(this.boxes, new_box)
         if array.size(this.boxes) > i_kz_max_days
             box.delete(array.pop(this.boxes))
@@ -817,6 +820,17 @@ compute_sig_state() =>
     var int   sim_first_time   = na
     var int   sim_last_time     = na
 
+    // Distinct Manila (PHT) WEEKDAYS that have had ≥1 in-range bar. Used as
+    // the denominator for Avg Trades/Day (display-only). td_day_key is a
+    // monotonic per-day key (y*10000+m*100+d, Asia/Manila) so a rollover is
+    // detected without history refs; td_anchor stores the last counted key.
+    // Only Mon–Fri are counted (the sim's killzones are weekday sessions;
+    // weekend bars, if any, don't define a trading day). Counted on the FIRST
+    // in-range bar of each new weekday — same open-day attribution the day
+    // counter uses, so trades and the denominator share one PHT clock.
+    var int   num_trading_days = 0
+    var int   td_anchor        = na
+
     day_today   = dayofmonth(time, "Asia/Manila")
     month_today = month(time, "Asia/Manila")
 
@@ -889,6 +903,13 @@ compute_sig_state() =>
         if na(sim_first_time)
             sim_first_time := time
         sim_last_time := time
+        // Count a new distinct Manila weekday the first time we see an in-range
+        // bar on it. year() in Asia/Manila keeps the key unique across months.
+        td_key = year(time, "Asia/Manila") * 10000 + month_today * 100 + day_today
+        is_weekday = bar_dow != dayofweek.saturday and bar_dow != dayofweek.sunday
+        if is_weekday and (na(td_anchor) or td_key != td_anchor)
+            td_anchor        := td_key
+            num_trading_days += 1
 
     // -- Session filter (5 killzones, all in the user-selected timezone). --
     in_kz_asia   = not na(time(timeframe.period, i_asia_sess,   i_kz_tz))
@@ -1408,6 +1429,7 @@ compute_sig_state() =>
     s.day_opens_today  := day_opens_today
     s.sim_first_time   := sim_first_time
     s.sim_last_time    := sim_last_time
+    s.num_trading_days := num_trading_days
     s.h1_bull             := h1_bull
     s.h1_bear             := h1_bear
     s.h1_bias_s           := h1_bias_s
@@ -1497,6 +1519,7 @@ day_losses_now   = st.day_losses_today
 day_opens_now    = st.day_opens_today
 sim_first_time   = st.sim_first_time
 sim_last_time    = st.sim_last_time
+num_trading_days = st.num_trading_days
 day_count_now    = day_wins_now + day_losses_now
 h1_bull          = st.h1_bull
 h1_bear          = st.h1_bear
@@ -2052,7 +2075,7 @@ pos_lookup(string s) =>
         "bottom_left"  => position.bottom_left
         => position.bottom_right
 
-var table tbl = table.new(pos_lookup(i_tbl_pos), 2, 30,
+var table tbl = table.new(pos_lookup(i_tbl_pos), 2, 33,
                           bgcolor      = color.new(color.black, 20),
                           border_color = color.new(color.gray, 50),
                           border_width = 1,
@@ -2061,6 +2084,14 @@ var table tbl = table.new(pos_lookup(i_tbl_pos), 2, 30,
 
 f_cell(int _row, int _col, string _txt, color _clr) =>
     table.cell(tbl, _col, _row, _txt, text_color=_clr, text_size=size.small, text_halign=text.align_left)
+
+// Section-header row: amber group name across col0 with a subtle tinted
+// background so the panel reads as grouped bands. col1 mirrors the tint to
+// keep the band continuous. Display-only.
+f_hdr(int _row, string _txt) =>
+    hdr_bg = color.new(#ffd54f, 88)
+    table.cell(tbl, 0, _row, _txt, text_color=color.new(#ffd54f, 0), text_size=size.small, text_halign=text.align_left, bgcolor=hdr_bg)
+    table.cell(tbl, 1, _row, "",   bgcolor=hdr_bg)
 
 title_col1_txt = "v6"
 
@@ -2079,7 +2110,7 @@ net_total_usd_pts = sim_total_usd - (closed_count * i_spread)
 net_total_usd   = net_total_usd_pts * usd_mult
 
 if i_show_tbl and barstate.islast
-    table.clear(tbl, 0, 0, 1, 26)
+    table.clear(tbl, 0, 0, 1, 32)
 
     f_cell(0, 0, "BG GOLDEN",      color.new(#ffd54f, 0))
     f_cell(0, 1, title_col1_txt,   color.new(#ffd54f, 0))
@@ -2165,33 +2196,69 @@ if i_show_tbl and barstate.islast
               (mins  < 10 ? "0" : "") + str.tostring(mins)  + "m"
             state_str := "OFF-SESS " + countdown
 
-    f_cell(1, 0, "State",     color.white)
-    f_cell(1, 1, state_str,   state_clr)
+    // =================================================================
+    // Panel layout (top→bottom, trader check order):
+    //   SETUP/IDENTITY · LIVE TRADE · TODAY · PERFORMANCE · STREAKS
+    // Fixed row indices; conditional groups (live-trade rows, multi-pos
+    // diagnostics) leave their rows blank when idle (table.clear wipes
+    // stale text each render). Section headers are tinted bands.
+    // =================================================================
+
+    // -- SETUP / IDENTITY ---------------------------------------------
+    f_hdr(1, "SETUP")
+
+    f_cell(2, 0, "State",     color.white)
+    f_cell(2, 1, state_str,   state_clr)
 
     symbol_line = syminfo.ticker + " " + timeframe.period + " · " + session_now
-    f_cell(2, 0, "Symbol",    color.white)
-    f_cell(2, 1, symbol_line, color.white)
+    f_cell(3, 0, "Symbol",    color.white)
+    f_cell(3, 1, symbol_line, color.white)
 
-    // Bias rows: when in trade, show TWO rows — the bias captured AT
-    // TRADE ENTRY (row 3, the value the gate actually evaluated to allow
-    // the trade) AND the CURRENT live bias (row 4, so you can see if the
-    // market has flipped against you mid-trade). When idle, only row 3
-    // is populated with the current bias; row 4 stays blank after clear.
+    f_cell(4, 0, "Slots",     color.white)
+    f_cell(4, 1, str.tostring(active_count) + " / " + str.tostring(i_max_pos),
+                  active_count >= i_max_pos ? color.orange : color.silver)
+
+    // Sim Range — first → last in-range bar the sim actually evaluated.
+    sim_range_str = na(sim_first_time) or na(sim_last_time) ? "—" :
+      str.format_time(sim_first_time, "yyyy-MM-dd", "Asia/Manila") + " → " +
+      str.format_time(sim_last_time,  "yyyy-MM-dd", "Asia/Manila")
+    f_cell(5, 0, "Sim Range", color.white)
+    f_cell(5, 1, sim_range_str, color.silver)
+
+    // -- LIVE TRADE ---------------------------------------------------
+    f_hdr(6, "LIVE TRADE")
+
+    // Bias rows: when in trade, show the bias captured AT TRADE ENTRY
+    // (the value the gate actually evaluated to allow the trade) AND the
+    // CURRENT live bias (so a mid-trade flip is visible). When idle, the
+    // entry row shows the current bias and the "now" row stays blank.
     bias_to_show = active_count > 0 ? bias_at_open : h1_bias_s
     bias_color = bias_to_show == "bullish" ? color.lime :
       bias_to_show == "bearish" ? color.red : color.silver
-    f_cell(3, 0, active_count > 0 ? "Bias @ entry" : "Bias", color.white)
-    f_cell(3, 1, bias_to_show, bias_color)
+    f_cell(7, 0, active_count > 0 ? "Bias @ entry" : "Bias", color.white)
+    f_cell(7, 1, bias_to_show, bias_color)
 
     if active_count > 0
         bias_now_color = h1_bias_s == "bullish" ? color.lime :
           h1_bias_s == "bearish" ? color.red : color.silver
-        f_cell(4, 0, "Bias (now)", color.white)
-        f_cell(4, 1, h1_bias_s, bias_now_color)
+        f_cell(8, 0, "Bias (now)", color.white)
+        f_cell(8, 1, h1_bias_s, bias_now_color)
 
-    f_cell(5, 0, "Slots",     color.white)
-    f_cell(5, 1, str.tostring(active_count) + " / " + str.tostring(i_max_pos),
-                  active_count >= i_max_pos ? color.orange : color.silver)
+    if active_count > 0
+        sl_tag = sim_eff_sl_r >= 2.0 ? " (TP2)" :
+          sim_eff_sl_r >= 1.0 ? " (TP1)" :
+          sim_eff_sl_r >= 0.0 ? " (BE)"  : ""
+        f_cell(9, 0, "Dir (latest)", color.white)
+        f_cell(9, 1, sim_long ? "BUY" : "SELL", sim_long ? color.lime : color.red)
+        f_cell(10, 0, "Entry",   color.white)
+        f_cell(10, 1, str.tostring(sim_entry, format.mintick), color.white)
+        f_cell(11, 0, "SL" + sl_tag, color.white)
+        f_cell(11, 1, str.tostring(sim_eff_sl, format.mintick),
+                       sim_eff_sl_r >= 0 ? i_col_be : color.red)
+        f_cell(12, 0, "TP1" + (sim_tp1_done ? " ✓" : ""), color.white)
+        f_cell(12, 1, str.tostring(sim_tp1, format.mintick), sim_tp1_done ? color.gray : color.lime)
+        f_cell(13, 0, final_tp_lbl + " (final)", color.white)
+        f_cell(13, 1, str.tostring(final_tp_price, format.mintick), color.lime)
 
     // Diagnostic rows — only in multi-position mode (don't clutter 1-pos).
     // "Add #N" = live reason the NEXT (Nth) entry is/isn't firing this bar;
@@ -2199,78 +2266,23 @@ if i_show_tbl and barstate.islast
     if i_max_pos > 1
         add_live_clr = add_reason_s == "READY (will fire)" ? color.lime :
           add_reason_s == "" ? color.gray : color.orange
-        f_cell(28, 0, "Add #" + str.tostring(active_count + 1), color.white)
-        f_cell(28, 1, add_reason_s == "" ? "—" : add_reason_s, add_live_clr)
-        f_cell(29, 0, "Last skip", color.white)
-        f_cell(29, 1, last_add_skip_s, last_add_skip_s == "—" ? color.gray : color.orange)
+        f_cell(14, 0, "Add #" + str.tostring(active_count + 1), color.white)
+        f_cell(14, 1, add_reason_s == "" ? "—" : add_reason_s, add_live_clr)
+        f_cell(15, 0, "Last skip", color.white)
+        f_cell(15, 1, last_add_skip_s, last_add_skip_s == "—" ? color.gray : color.orange)
 
-    // Trades — merged count + win-rate into one row (mirrors the "Day" row
-    // style below). wr reuses the SAME formula/format and zero-guard the old
-    // "Win Rate" row used; the "Win Rate" row itself is now folded in here.
-    wr = sim_wins + sim_losses > 0 ? sim_wins * 100.0 / (sim_wins + sim_losses) : 0.0
-    wr_str = str.tostring(wr, "0.0") + "%"
-    f_cell(6, 0, "Trades", color.white)
-    f_cell(6, 1, str.tostring(sim_count) + " (" + str.tostring(sim_wins) +
-                  "W/" + str.tostring(sim_losses) + "L · " + wr_str + ")", color.white)
+    // -- TODAY --------------------------------------------------------
+    f_hdr(16, "TODAY")
 
-    // Total R — single R total, now the NET (spread-adjusted) figure. With
-    // i_spread = 0, net == gross so the number is unchanged from the old
-    // gross "Total Return" row. Sign/format/color mirror the old Net R cell.
-    f_cell(7, 0, "Total R", color.white)
-    f_cell(7, 1, str.tostring(net_total_r, "+0.00") + "R",
-                  net_total_r >= 0 ? color.lime : color.red)
-
-    // Total $ — single $ total, now the NET (spread-adjusted) figure × lot
-    // multiplier. With i_spread = 0, net == gross. Format/color mirror the
-    // old Net $ / Total $ cell.
-    f_cell(8, 0, "Total $", color.white)
-    f_cell(8, 1, (net_total_usd >= 0 ? "+" : "") + str.tostring(net_total_usd, "#.##"),
-                  net_total_usd >= 0 ? i_col_buy : i_col_sell)
-
-    // -- Edge metrics (folded in from the old Performance panel). Derived
-    //    chart-side from the gross accumulators; gross buckets untouched.
-    //    Net R / Net $ are NOT repeated here — they ARE the Total R / Total $
-    //    rows above. The old "N closed" header is dropped (Trades shows count).
-    expectancy_r  = closed_count > 0 ? net_total_r / closed_count : 0.0
-    profit_factor = gross_loss_r > 0 ? gross_win_r / gross_loss_r : na
-    avg_win_r     = sim_wins   > 0 ? gross_win_r  / sim_wins   : 0.0
-    avg_loss_r    = sim_losses > 0 ? gross_loss_r / sim_losses : 0.0
-    avg_mfe_r     = closed_count > 0 ? sum_mfe_r / closed_count : 0.0
-    avg_mae_r     = closed_count > 0 ? sum_mae_r / closed_count : 0.0
-
-    f_cell(9, 0, "Expectancy R", color.white)
-    f_cell(9, 1, str.tostring(expectancy_r, "+0.00") + "R",
-                  expectancy_r > 0 ? color.lime : color.red)
-
-    pf_str = na(profit_factor) ? (gross_win_r > 0 ? "∞" : "—") : str.tostring(profit_factor, "0.00")
-    pf_clr = na(profit_factor) ? (gross_win_r > 0 ? color.lime : color.silver) :
-      profit_factor > 1 ? color.lime : color.red
-    f_cell(10, 0, "Profit Factor", color.white)
-    f_cell(10, 1, pf_str, pf_clr)
-
-    f_cell(11, 0, "Avg Win R", color.white)
-    f_cell(11, 1, str.tostring(avg_win_r, "0.00") + "R", color.silver)
-    f_cell(12, 0, "Avg Loss R", color.white)
-    f_cell(12, 1, str.tostring(avg_loss_r, "0.00") + "R", color.silver)
-    f_cell(13, 0, "Max Consec W", color.white)
-    f_cell(13, 1, str.tostring(max_win_streak), color.silver)
-    f_cell(14, 0, "Max Consec L", color.white)
-    f_cell(14, 1, str.tostring(max_loss_streak), color.silver)
-    // Current streak — NBA-style "W5" / "L3" of the active run. At most one of
-    // cur_win/cur_loss is non-zero (the other is reset on each close), so the
-    // non-zero one IS the live streak; "—" when no trades have resolved.
-    streak_txt = cur_win_streak > 0 ? "W" + str.tostring(cur_win_streak) :
-      cur_loss_streak > 0 ? "L" + str.tostring(cur_loss_streak) : "—"
-    streak_clr = cur_win_streak > 0 ? i_col_buy :
-      cur_loss_streak > 0 ? i_col_sell : color.gray
-    f_cell(15, 0, "Streak", color.white)
-    f_cell(15, 1, streak_txt, streak_clr)
-    f_cell(16, 0, "Avg MFE R", color.white)
-    f_cell(16, 1, str.tostring(avg_mfe_r, "+0.00") + "R", color.silver)
-    // Avg MAE R is the worst ADVERSE excursion (per-trade mae_r ≤ 0), so the
-    // average is ≤ 0 and the "+0.00" format renders the true leading '-'.
-    f_cell(17, 0, "Avg MAE R", color.white)
-    f_cell(17, 1, str.tostring(avg_mae_r, "+0.00") + "R", color.silver)
+    // Day — merged trades + WR into one row. day_wr reuses the SAME formula
+    // and "0.0" format as the old "Day WR" row; the "—"/0.0% guard at zero
+    // trades is preserved inside the merged string.
+    day_wr = day_count_now > 0 ? day_wins_now * 100.0 / day_count_now : 0.0
+    day_wr_str = day_count_now > 0 ? str.tostring(day_wr, "0.0") + "%" : "—"
+    f_cell(17, 0, "Day", color.white)
+    f_cell(17, 1, str.tostring(day_count_now) + " (" + str.tostring(day_wins_now) +
+                  "W/" + str.tostring(day_losses_now) + "L · " + day_wr_str + ")",
+                  day_count_now > 0 ? color.white : color.gray)
 
     f_cell(18, 0, "Day R (PHT)", color.white)
     f_cell(18, 1, str.tostring(day_r_now, "+0.00") + "R",
@@ -2281,45 +2293,77 @@ if i_show_tbl and barstate.islast
     f_cell(19, 1, (day_usd_disp >= 0 ? "+" : "") + str.tostring(day_usd_disp, "#.##"),
                   day_usd_disp >= 0 ? i_col_buy : i_col_sell)
 
+    // -- PERFORMANCE (sim totals) -------------------------------------
+    f_hdr(20, "PERFORMANCE")
+
+    // Trades — merged count + win-rate into one row (mirrors the "Day" row
+    // style). wr reuses the SAME formula/format/zero-guard as the old row.
+    wr = sim_wins + sim_losses > 0 ? sim_wins * 100.0 / (sim_wins + sim_losses) : 0.0
+    wr_str = str.tostring(wr, "0.0") + "%"
+    f_cell(21, 0, "Trades", color.white)
+    f_cell(21, 1, str.tostring(sim_count) + " (" + str.tostring(sim_wins) +
+                  "W/" + str.tostring(sim_losses) + "L · " + wr_str + ")", color.white)
+
+    // Avg Trades/Day = total sim trades ÷ distinct PHT weekdays with ≥1
+    // in-range bar (num_trading_days, attributed on each trade's OPEN day —
+    // same clock as the Day counter). Avg Trades/Week = daily × 5.
+    avg_td_day  = num_trading_days > 0 ? sim_count / num_trading_days : 0.0
+    avg_td_week = avg_td_day * 5.0
+    f_cell(22, 0, "Avg Trades/Day", color.white)
+    f_cell(22, 1, num_trading_days > 0 ? str.tostring(avg_td_day, "0.0") : "—",
+                  num_trading_days > 0 ? color.silver : color.gray)
+    f_cell(23, 0, "Avg Trades/Week", color.white)
+    f_cell(23, 1, num_trading_days > 0 ? str.tostring(avg_td_week, "0.0") : "—",
+                  num_trading_days > 0 ? color.silver : color.gray)
+
+    // Total R — single R total, the NET (spread-adjusted) figure. With
+    // i_spread = 0, net == gross. Sign/format/color mirror the old cell.
+    f_cell(24, 0, "Total R", color.white)
+    f_cell(24, 1, str.tostring(net_total_r, "+0.00") + "R",
+                  net_total_r >= 0 ? color.lime : color.red)
+
+    // Total $ — NET (spread-adjusted) × lot multiplier. With i_spread = 0,
+    // net == gross. Format/color mirror the old Net $ / Total $ cell.
+    f_cell(25, 0, "Total $", color.white)
+    f_cell(25, 1, (net_total_usd >= 0 ? "+" : "") + str.tostring(net_total_usd, "#.##"),
+                  net_total_usd >= 0 ? i_col_buy : i_col_sell)
+
+    expectancy_r  = closed_count > 0 ? net_total_r / closed_count : 0.0
+    profit_factor = gross_loss_r > 0 ? gross_win_r / gross_loss_r : na
+
+    f_cell(26, 0, "Expectancy R", color.white)
+    f_cell(26, 1, str.tostring(expectancy_r, "+0.00") + "R",
+                  expectancy_r > 0 ? color.lime : color.red)
+
+    pf_str = na(profit_factor) ? (gross_win_r > 0 ? "∞" : "—") : str.tostring(profit_factor, "0.00")
+    pf_clr = na(profit_factor) ? (gross_win_r > 0 ? color.lime : color.silver) :
+      profit_factor > 1 ? color.lime : color.red
+    f_cell(27, 0, "Profit Factor", color.white)
+    f_cell(27, 1, pf_str, pf_clr)
+
     // Max DD $ — worst realized peak-to-trough decline of the cumulative
     // equity curve, in account dollars (raw points × lot multiplier).
     // Shown as a negative magnitude (a loss). Default lot reproduces raw pts.
     max_dd_disp = max_dd_pts * usd_mult
-    f_cell(20, 0, "Max DD $", color.white)
-    f_cell(20, 1, "-" + str.tostring(max_dd_disp, "#.##"), i_col_sell)
+    f_cell(28, 0, "Max DD $", color.white)
+    f_cell(28, 1, "-" + str.tostring(max_dd_disp, "#.##"), i_col_sell)
 
-    // Day — merged trades + WR into one row. day_wr reuses the SAME formula
-    // and "0.0" format as the old "Day WR" row; the "—"/0.0% guard at zero
-    // trades is preserved inside the merged string.
-    day_wr = day_count_now > 0 ? day_wins_now * 100.0 / day_count_now : 0.0
-    day_wr_str = day_count_now > 0 ? str.tostring(day_wr, "0.0") + "%" : "—"
-    f_cell(21, 0, "Day", color.white)
-    f_cell(21, 1, str.tostring(day_count_now) + " (" + str.tostring(day_wins_now) +
-                  "W/" + str.tostring(day_losses_now) + "L · " + day_wr_str + ")",
-                  day_count_now > 0 ? color.white : color.gray)
+    // -- STREAKS ------------------------------------------------------
+    f_hdr(29, "STREAKS")
 
-    // Sim Range — first → last in-range bar the sim actually evaluated.
-    sim_range_str = na(sim_first_time) or na(sim_last_time) ? "—" :
-      str.format_time(sim_first_time, "yyyy-MM-dd", "Asia/Manila") + " → " +
-      str.format_time(sim_last_time,  "yyyy-MM-dd", "Asia/Manila")
-    f_cell(22, 0, "Sim Range", color.white)
-    f_cell(22, 1, sim_range_str, color.silver)
-
-    if active_count > 0
-        sl_tag = sim_eff_sl_r >= 2.0 ? " (TP2)" :
-          sim_eff_sl_r >= 1.0 ? " (TP1)" :
-          sim_eff_sl_r >= 0.0 ? " (BE)"  : ""
-        f_cell(23, 0, "Dir (latest)", color.white)
-        f_cell(23, 1, sim_long ? "BUY" : "SELL", sim_long ? color.lime : color.red)
-        f_cell(24, 0, "Entry",   color.white)
-        f_cell(24, 1, str.tostring(sim_entry, format.mintick), color.white)
-        f_cell(25, 0, "SL" + sl_tag, color.white)
-        f_cell(25, 1, str.tostring(sim_eff_sl, format.mintick),
-                       sim_eff_sl_r >= 0 ? i_col_be : color.red)
-        f_cell(26, 0, "TP1" + (sim_tp1_done ? " ✓" : ""), color.white)
-        f_cell(26, 1, str.tostring(sim_tp1, format.mintick), sim_tp1_done ? color.gray : color.lime)
-        f_cell(27, 0, final_tp_lbl + " (final)", color.white)
-        f_cell(27, 1, str.tostring(final_tp_price, format.mintick), color.lime)
+    f_cell(30, 0, "Max Consec W", color.white)
+    f_cell(30, 1, str.tostring(max_win_streak), color.silver)
+    f_cell(31, 0, "Max Consec L", color.white)
+    f_cell(31, 1, str.tostring(max_loss_streak), color.silver)
+    // Current streak — NBA-style "W5" / "L3" of the active run. At most one of
+    // cur_win/cur_loss is non-zero (the other is reset on each close), so the
+    // non-zero one IS the live streak; "—" when no trades have resolved.
+    streak_txt = cur_win_streak > 0 ? "W" + str.tostring(cur_win_streak) :
+      cur_loss_streak > 0 ? "L" + str.tostring(cur_loss_streak) : "—"
+    streak_clr = cur_win_streak > 0 ? i_col_buy :
+      cur_loss_streak > 0 ? i_col_sell : color.gray
+    f_cell(32, 0, "Streak", color.white)
+    f_cell(32, 1, streak_txt, streak_clr)
 
 // =====================================================================
 // TUNING SUGGESTIONS PANEL
