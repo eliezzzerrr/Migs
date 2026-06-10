@@ -57,7 +57,7 @@ i_atr_per   = input.int(14,   "ATR period",                      minval=1, group
      tooltip="Volatility smoothing for SL buffer and entry proximity. Suggested by TF: 1m=50, 5m=14, 15m=14, 30m=14, 1H=14.")
 i_sl_buf    = input.float(0.45, "SL buffer (× ATR beyond OB)",   minval=0.0, step=0.05, group=g_struct,
      tooltip="Pads SL past the OB extreme to avoid wick stops. Suggested by TF: 1m=0.1, 5m=0.1, 15m=0.15, 30m=0.15, 1H=0.2.")
-i_min_sl    = input.float(9.0, "Min SL distance ($) — clamp",    minval=0.0, step=0.5, group=g_struct,
+i_min_sl    = input.float(11.5, "Min SL distance ($) — clamp",   minval=0.0, step=0.5, group=g_struct,
      tooltip="CLAMP: if OB-derived SL would be tighter than this, push it out to meet the floor (trade still fires with the wider stop). 0 = disabled. Suggested for XAUUSD by TF: 1m=$5, 5m=$7, 15m=$10, 30m=$15, 1H=$25.")
 i_min_sl_flt = input.float(4.0, "Min SL filter ($) — reject",     minval=0.0, step=0.5, group=g_struct,
      tooltip="FILTER: reject the trade entirely if the OB-derived SL distance is below this threshold (BEFORE the clamp is applied). 0 = disabled. Use this to skip setups whose natural OB is so small the trade would be all-spread. Different from the clamp above: filter SKIPS, clamp WIDENS. Suggested for XAUUSD by TF: 1m=$3, 5m=$5, 15m=$7, 30m=$10, 1H=$15.")
@@ -113,9 +113,9 @@ i_asia_dow_sun   = input.bool(false, "Sun", inline="ASIA_DOW", group=g_sess)
 
 i_use_london     = input.bool(true,  "", inline="LONDON", group=g_sess)
 i_london_txt     = input.string("London",    "", inline="LONDON", group=g_sess)
-i_london_sess    = input.session("1330-1700", "", inline="LONDON", group=g_sess)
+i_london_sess    = input.session("1330-2000", "", inline="LONDON", group=g_sess)
 i_london_color   = input.color(color.red,    "", inline="LONDON", group=g_sess)
-i_london_dow_mon = input.bool(true,  "Mon", inline="LONDON_DOW", group=g_sess,
+i_london_dow_mon = input.bool(false, "Mon", inline="LONDON_DOW", group=g_sess,
      tooltip="Per-session day-of-week filter for the London killzone. Tick days when London is ALLOWED to open new trades; untick days when London should be SKIPPED. Use this to block the 2 losing London weekdays while keeping the 3 profitable ones. Defaults: all 7 days ticked (no restriction). Weekday timezone: Asia/Manila.")
 i_london_dow_tue = input.bool(true,  "Tue", inline="LONDON_DOW", group=g_sess)
 i_london_dow_wed = input.bool(true,  "Wed", inline="LONDON_DOW", group=g_sess)
@@ -124,11 +124,11 @@ i_london_dow_fri = input.bool(true,  "Fri", inline="LONDON_DOW", group=g_sess)
 i_london_dow_sat = input.bool(false, "Sat", inline="LONDON_DOW", group=g_sess)
 i_london_dow_sun = input.bool(false, "Sun", inline="LONDON_DOW", group=g_sess)
 
-i_use_nyam       = input.bool(true, "", inline="NYAM",   group=g_sess)
+i_use_nyam       = input.bool(false, "", inline="NYAM",   group=g_sess)
 i_nyam_txt       = input.string("NY AM",     "", inline="NYAM",   group=g_sess)
 i_nyam_sess      = input.session("2130-2300", "", inline="NYAM",  group=g_sess)
 i_nyam_color     = input.color(#089981,      "", inline="NYAM",   group=g_sess)
-i_nyam_dow_mon   = input.bool(true, "Mon", inline="NYAM_DOW", group=g_sess,
+i_nyam_dow_mon   = input.bool(false, "Mon", inline="NYAM_DOW", group=g_sess,
      tooltip="Per-session day-of-week filter for the NY AM killzone. Same semantics as the Asia/London filters: tick days when NY AM is ALLOWED to open new trades. Defaults: all 7 days ticked. Weekday timezone: Asia/Manila.")
 i_nyam_dow_tue   = input.bool(false, "Tue", inline="NYAM_DOW", group=g_sess)
 i_nyam_dow_wed   = input.bool(false, "Wed", inline="NYAM_DOW", group=g_sess)
@@ -137,7 +137,7 @@ i_nyam_dow_fri   = input.bool(false, "Fri", inline="NYAM_DOW", group=g_sess)
 i_nyam_dow_sat   = input.bool(true, "Sat", inline="NYAM_DOW", group=g_sess)
 i_nyam_dow_sun   = input.bool(true, "Sun", inline="NYAM_DOW", group=g_sess)
 
-i_use_nylu       = input.bool(true, "", inline="NYLU",   group=g_sess)
+i_use_nylu       = input.bool(false, "", inline="NYLU",   group=g_sess)
 i_nylu_txt       = input.string("NY Lunch",  "", inline="NYLU",   group=g_sess)
 i_nylu_sess      = input.session("0000-0100", "", inline="NYLU",  group=g_sess)
 i_nylu_color     = input.color(color.yellow, "", inline="NYLU",   group=g_sess)
@@ -150,7 +150,7 @@ i_nylu_dow_fri   = input.bool(false, "Fri", inline="NYLU_DOW", group=g_sess)
 i_nylu_dow_sat   = input.bool(true, "Sat", inline="NYLU_DOW", group=g_sess)
 i_nylu_dow_sun   = input.bool(true, "Sun", inline="NYLU_DOW", group=g_sess)
 
-i_use_nypm       = input.bool(true, "", inline="NYPM",   group=g_sess)
+i_use_nypm       = input.bool(false, "", inline="NYPM",   group=g_sess)
 i_nypm_txt       = input.string("NY PM",     "", inline="NYPM",   group=g_sess)
 i_nypm_sess      = input.session("0130-0400", "", inline="NYPM",  group=g_sess)
 i_nypm_color     = input.color(color.purple, "", inline="NYPM",   group=g_sess)
@@ -163,7 +163,7 @@ i_nypm_dow_fri   = input.bool(false, "Fri", inline="NYPM_DOW", group=g_sess)
 i_nypm_dow_sat   = input.bool(true, "Sat", inline="NYPM_DOW", group=g_sess)
 i_nypm_dow_sun   = input.bool(true, "Sun", inline="NYPM_DOW", group=g_sess)
 
-i_box_trans    = input.int(70, "Box Transparency",  minval=0, maxval=100, group=g_sess)
+i_box_trans    = input.int(80, "Box Transparency",  minval=0, maxval=100, group=g_sess)
 i_text_trans   = input.int(50, "Text Transparency", minval=0, maxval=100, group=g_sess)
 i_kz_max_days  = input.int(25, "Killzone history (sessions kept)", minval=1, group=g_sess,
      tooltip="How many of the most recent killzone boxes to keep on the chart, per session. Older boxes are auto-pruned.")
@@ -199,6 +199,8 @@ i_tbl_pos   = input.string("top_right", "Table position",
 i_lbl_off   = input.int(15, "Label offset (bars right)",          minval=1, group=g_disp)
 i_show_watch = input.bool(true, "Show potential entry (WATCH state)", group=g_disp,
      tooltip="When the State is WATCH·BUY / WATCH·SELL, draw a dashed line + price label at the level the engine is waiting for (OB edge ± Entry-proximity×ATR). The setup fires when price reaches this level. Note: the trade still has to pass the Min-SL filter when it triggers.")
+i_show_setup_note = input.bool(true, "Show GET READY note (SETUP state)", group=g_disp,
+     tooltip="When the State reaches SETUP·BUY / SETUP·SELL — price is within Entry-proximity of the OB and every gate (session, date, cooldown, day limits, HTF bias) is green — draw ONE bold 'GET READY' label at the right edge of the chart, beside current price. This marks a signal as IMMINENT (the sim fires the moment the confirmed bar triggers). Shows the projected entry / SL / TP2 from the same watch_* levels the WATCH line uses. Live-only (tracks the last bar); never paints historical SETUP bars.")
 i_show_breakdown = input.bool(true, "Show session/weekday R breakdown", group=g_disp,
      tooltip="Optional panel attributing realized R and trade count to the session and the weekday each trade OPENED in (data-driven from the sim itself, no priors). Σ(session R)=Σ(weekday R)=gross Total R. Default OFF.")
 i_bd_pos    = input.string("bottom_left", "Breakdown panel position",
@@ -229,6 +231,8 @@ i_alert_entry = input.bool(true,  "Alert on SETUP entry", group=g_alert,
      tooltip="Fires the moment a trade opens (confirmed bar = the system's actual entry). This is the 'enter now, don't be late' alert.")
 i_alert_watch = input.bool(false, "Alert on WATCH (approaching)", group=g_alert,
      tooltip="Heads-up when a setup is forming and price is nearing the trigger level. May not lead to an entry.")
+i_alert_setup = input.bool(false, "Alert on SETUP (signal imminent)", group=g_alert,
+     tooltip="Fires ONCE when the State transitions into SETUP·BUY / SETUP·SELL — price has reached Entry-proximity of the OB with all gates green and the sim is about to trigger. One bar later than WATCH, one bar earlier than the entry fill. Transition-gated (not every bar it holds).")
 i_alert_exit  = input.bool(false, "Alert on TP / SL hit", group=g_alert,
      tooltip="Notifies when an open trade hits a take-profit or stop.")
 
@@ -363,6 +367,15 @@ type SigState
     float  watch_sl_px   = na
     float  watch_tp1_px  = na
     float  watch_tp2_px  = na
+    // Projected entry/SL/TP2 for the SETUP state (price already in proximity,
+    // so watch_* are na). Entry = current close (engine books at bar close);
+    // SL/TP2 mirror the real entry block's clamp math. Display-only, na
+    // outside SETUP. setup_dir: +1 buy, -1 sell, 0 none.
+    float  setup_entry_px = na
+    int    setup_dir      = 0
+    float  setup_sl_px   = na
+    float  setup_tp1_px  = na
+    float  setup_tp2_px  = na
     // Displayed (latest opened active) trade
     bool   sim_long      = false
     bool   sim_short     = false
@@ -428,6 +441,10 @@ type SigState
     // Diagnostic: 2nd/3rd-position skip reasons (read-only).
     string add_reason_s    = ""
     string last_add_skip_s = "—"
+    // Add-ready surface (display-only): +1/-1 when add_reason == "READY (will
+    // fire)" with that setup's direction, else 0. Drives the GET READY label's
+    // in-trade ADD case. Bound to the SAME condition as the panel "Add #N" row.
+    int    add_ready_dir   = 0
     // -- PRE-ENTRY CHECKLIST (display-only). Surfaces the engine's OWN gate
     //    evaluations on the last CONFIRMED bar, for the CANDIDATE direction
     //    (active BOS dir: bull BOS→BUY, bear BOS→SELL; 0 = no active BOS).
@@ -861,6 +878,41 @@ compute_sig_state() =>
         watch_tp1_px := watch_entry_px - 1.0 * risk_w
         watch_tp2_px := watch_entry_px - 2.0 * risk_w
 
+    // -- Projected entry/SL/TP2 for the SETUP state (price already in
+    //    proximity → near_bull/near_bear true → watch_* na). Uses THE ENGINE'S
+    //    OWN entry math so the GET READY label matches what would book at bar
+    //    close: entry = close; raw_sl = OB edge ± i_sl_buf*atr; Min-SL CLAMP
+    //    widens to i_min_sl when raw distance < i_min_sl — EXACT mirror of the
+    //    entry block (~lines 1300-1345). The Min-SL FILTER (reject) is
+    //    intentionally NOT applied: the checklist Min-SL row already flags a
+    //    reject, and the projection should still display. Purely visual — these
+    //    locals/fields touch NOTHING in signal/sim accounting. --
+    float setup_entry_px = na
+    int   setup_dir      = 0
+    float setup_sl_px    = na
+    float setup_tp1_px   = na
+    float setup_tp2_px   = na
+    if bull_setup
+        setup_entry_px := close
+        setup_dir      := 1
+        raw_sl_s = ob_low - i_sl_buf * atr_val
+        raw_dst_s = close - raw_sl_s
+        final_sl_s = (i_min_sl > 0 and raw_dst_s < i_min_sl) ? close - i_min_sl : raw_sl_s
+        risk_s = close - final_sl_s
+        setup_sl_px  := final_sl_s
+        setup_tp1_px := close + 1.0 * risk_s
+        setup_tp2_px := close + 2.0 * risk_s
+    else if bear_setup
+        setup_entry_px := close
+        setup_dir      := -1
+        raw_sl_s = ob_high + i_sl_buf * atr_val
+        raw_dst_s = raw_sl_s - close
+        final_sl_s = (i_min_sl > 0 and raw_dst_s < i_min_sl) ? close + i_min_sl : raw_sl_s
+        risk_s = final_sl_s - close
+        setup_sl_px  := final_sl_s
+        setup_tp1_px := close - 1.0 * risk_s
+        setup_tp2_px := close - 2.0 * risk_s
+
     // -- Sim state: array of active trades + aggregate counters --
     var array<Trade> active_trades = array.new<Trade>(0)
     var int   sim_close_bar   = na
@@ -1276,6 +1328,12 @@ compute_sig_state() =>
     // never feeds the entry condition. 2-space continuation indent so the
     // ternary chain isn't a multiple of 4 (Pine v6 line-continuation rule).
     string add_reason = ""
+    // Add-ready direction: set ONLY when the add evaluation resolves to
+    // "READY (will fire)" — i.e. an in-trade slot is free and a same-dir setup
+    // is at the OB with all gates green. Direction = the firing setup's side.
+    // Display-only; never feeds the entry condition. Bound to the EXACT same
+    // ternary chain as add_reason (no parallel re-derivation).
+    int add_ready_dir = 0
     if array.size(active_trades) >= 1 and array.size(active_trades) < i_max_pos
         add_reason := not in_date_range ? "DATE-OUT" :
           not in_session ? "OFF-SESS" :
@@ -1285,6 +1343,10 @@ compute_sig_state() =>
           ob_already_held ? "SAME-OB" :
           ((bull_setup and active_dir == -1) or (bear_setup and active_dir == 1)) ? "OPP-DIR" :
           "READY (will fire)"
+        // Bind add-ready dir to the SAME outcome string (single source of truth):
+        // only set when add_reason resolved to READY; dir = the firing setup side.
+        if add_reason == "READY (will fire)"
+            add_ready_dir := bull_setup ? 1 : -1
     // Latch the last REAL skip (a setup was present but a gate blocked it).
     var string last_add_skip    = "—"
     var int    last_add_skip_bi = na
@@ -1842,6 +1904,11 @@ compute_sig_state() =>
     s.watch_sl_px      := watch_sl_px
     s.watch_tp1_px     := watch_tp1_px
     s.watch_tp2_px     := watch_tp2_px
+    s.setup_entry_px   := setup_entry_px
+    s.setup_dir        := setup_dir
+    s.setup_sl_px      := setup_sl_px
+    s.setup_tp1_px     := setup_tp1_px
+    s.setup_tp2_px     := setup_tp2_px
     s.sim_long         := d_long
     s.sim_short        := d_short
     s.sim_entry        := d_entry
@@ -1892,6 +1959,7 @@ compute_sig_state() =>
     s.in_session       := in_session
     s.cooldown_ok      := cooldown_ok
     s.add_reason_s     := add_reason
+    s.add_ready_dir    := add_ready_dir
     s.last_add_skip_s  := last_add_skip
     s.cand_dir          := cand_dir
     s.chk_killzone      := in_session
@@ -1980,6 +2048,11 @@ watch_dir        = st.watch_dir
 watch_sl_px      = st.watch_sl_px
 watch_tp1_px     = st.watch_tp1_px
 watch_tp2_px     = st.watch_tp2_px
+setup_entry_px   = st.setup_entry_px
+setup_dir        = st.setup_dir
+setup_sl_px      = st.setup_sl_px
+setup_tp1_px     = st.setup_tp1_px
+setup_tp2_px     = st.setup_tp2_px
 sim_long         = st.sim_long
 sim_short        = st.sim_short
 sim_entry        = st.sim_entry
@@ -2031,6 +2104,7 @@ in_date_range    = st.in_date_range
 in_session       = st.in_session
 cooldown_ok      = st.cooldown_ok
 add_reason_s     = st.add_reason_s
+add_ready_dir    = st.add_ready_dir
 last_add_skip_s  = st.last_add_skip_s
 chk_cand_dir     = st.cand_dir
 chk_killzone     = st.chk_killzone
@@ -2067,6 +2141,37 @@ just_closed_long   = closed_by_tp_long  or closed_by_sl_long
 just_closed_short  = closed_by_tp_short or closed_by_sl_short
 
 // =====================================================================
+// SETUP-state derivation — single source of truth for the "GET READY"
+// label and the SETUP alert. This reproduces the EXACT precedence of the
+// status-table State switch (see ~"SETUP · BUY"/"SETUP · SELL" cases):
+// the State only reads SETUP when active_count == 0 AND every gate is
+// green (date / session / cooldown / day-loss / day-max) AND the engine's
+// bull_setup / bear_setup flag is set. No parallel re-derivation — these
+// booleans ARE the State row's SETUP cases, hoisted out so the visual and
+// the alert bind to precisely the same condition. Computed every bar
+// (confirmed-bar safe); the transition flag below fires once on entry.
+// =====================================================================
+gates_green      = active_count == 0 and in_date_range and in_session and cooldown_ok and
+  not (i_max_day_loss_r > 0 and day_r_now <= -i_max_day_loss_r) and
+  not (i_max_day_trades > 0 and day_opens_now >= i_max_day_trades)
+state_setup_buy  = gates_green and bull_setup
+state_setup_sell = gates_green and bear_setup
+state_is_setup   = state_setup_buy or state_setup_sell
+var bool prev_setup = false
+setup_entered    = state_is_setup and not prev_setup
+
+// ADD-READY surface — the in-trade analogue of the flat SETUP state. Bound to
+// add_ready_dir, which the engine sets ONLY when the panel's "Add #N" row reads
+// "READY (will fire)" (slot free, same-dir setup at OB, gates green). The GET
+// READY label and the SETUP alert extend onto these so an imminent ADD lights
+// up the same way a flat entry does. Display-only; engine untouched.
+add_ready_buy    = add_ready_dir == 1
+add_ready_sell   = add_ready_dir == -1
+add_is_ready     = add_ready_dir != 0
+var bool prev_add_ready = false
+add_ready_entered = add_is_ready and not prev_add_ready
+
+// =====================================================================
 // ALERTS (alert() — multiplexed through ONE TradingView alert slot)
 // Create a single alert on this indicator with condition
 // "Any alert() function call". Each event below fires only when its
@@ -2094,6 +2199,24 @@ if i_alerts_on
         w_msg = "BG 15m WATCH " + w_dir + " " + syminfo.ticker + " " + timeframe.period +
           " — waiting @ " + str.tostring(watch_entry_px, format.mintick)
         alert(w_msg, alert.freq_once_per_bar_close)
+    // -- Setup: fire ONCE on transition into SETUP state (price at OB, all
+    //    gates green, signal imminent). Binds to the same state_is_setup
+    //    the GET READY label uses; setup_entered is the rising edge. --
+    if i_alert_setup and setup_entered
+        s_dir = state_setup_buy ? "BUY" : "SELL"
+        s_msg = "BG SMC: SETUP " + s_dir + " — price at OB, signal imminent " +
+          syminfo.ticker + " " + timeframe.period +
+          (na(watch_entry_px) ? "" : " | entry " + str.tostring(watch_entry_px, format.mintick))
+        alert(s_msg, alert.freq_once_per_bar_close)
+    // -- Add-ready: same i_alert_setup slot, separate rising edge. Fires once on
+    //    transition into the in-trade ADD-ready state (slot free, same-dir setup
+    //    at OB, gates green). Message variant flags it as an ADD. --
+    if i_alert_setup and add_ready_entered
+        as_dir = add_ready_buy ? "BUY" : "SELL"
+        as_msg = "BG SMC: ADD " + as_dir + " imminent — price at OB, slot free " +
+          syminfo.ticker + " " + timeframe.period +
+          (na(setup_entry_px) ? "" : " | entry ~" + str.tostring(setup_entry_px, format.mintick))
+        alert(as_msg, alert.freq_once_per_bar_close)
     // -- Exit: any open trade hit a take-profit or stop this bar --
     if i_alert_exit and (closed_by_tp_long or closed_by_sl_long or closed_by_tp_short or closed_by_sl_short)
         x_dir   = (closed_by_tp_long or closed_by_sl_long) ? "LONG" : "SHORT"
@@ -2106,6 +2229,10 @@ if i_alerts_on
 // Track watch level/dir for next-bar new-watch detection (every bar).
 prev_watch := watch_entry_px
 prev_dir   := watch_dir
+// Track SETUP state for next-bar transition detection (rising edge → alert).
+prev_setup := state_is_setup
+// Track ADD-READY state for its own rising-edge alert transition.
+prev_add_ready := add_is_ready
 
 // SMC visual fields (BG-driven; consumed by the SMC drawing section below).
 smc_bos_bull  = st.smc_bos_bull
@@ -2486,6 +2613,66 @@ if barstate.islast
         if not na(watch_tp2_lbl)
             label.set_xy(watch_tp2_lbl, bar_index, na)
             label.set_text(watch_tp2_lbl, "")
+
+// =====================================================================
+// GET READY note (SETUP state) — ONE prominent live label at the right
+// edge of the chart marking an IMMINENT signal. Binds to state_is_setup
+// (the exact SETUP·BUY/SELL State-row condition, derived above), so it
+// appears/updates precisely while the panel reads SETUP and is deleted
+// the instant the state leaves SETUP (fired, faded, or a gate dropped).
+// Single reusable var handle → only ever one such label on the chart, no
+// orphan stacking. Rendered under barstate.islast only (a "right now"
+// aid that tracks live price — NOT a historical SETUP marker). Projected
+// entry / SL / TP2 reuse the watch_* levels; na parts degrade gracefully.
+// =====================================================================
+var label setup_note_lbl = na
+if barstate.islast
+    if i_show_setup_note and (state_is_setup or add_is_ready)
+        // Two trigger sources share this label: the flat SETUP state and the
+        // in-trade ADD-ready state. SETUP wins precedence if both somehow hold
+        // (they are mutually exclusive in practice — SETUP needs active_count==0).
+        sn_is_add = not state_is_setup and add_is_ready
+        sn_buy    = sn_is_add ? add_ready_buy : state_setup_buy
+        sn_head   = sn_is_add ?
+          (sn_buy ? "⚡ GET READY — ADD BUY" : "⚡ GET READY — ADD SELL") :
+          (sn_buy ? "⚡ GET READY — BUY" : "⚡ GET READY — SELL")
+        // Projected entry/SL/TP2: prefer setup_* (the engine's own entry math,
+        // populated whenever price is in proximity = exactly the SETUP state).
+        // Fall back to watch_* so the line still renders if setup_* were ever
+        // na. Both are projection-only; "~" conveys the live approximation.
+        sn_entry_px = not na(setup_entry_px) ? setup_entry_px : watch_entry_px
+        sn_sl_px    = not na(setup_sl_px)    ? setup_sl_px    : watch_sl_px
+        sn_tp2_px   = not na(setup_tp2_px)   ? setup_tp2_px   : watch_tp2_px
+        // Line 2: assemble only the projected pieces that are non-na.
+        sn_parts = ""
+        if not na(sn_entry_px)
+            sn_parts := "entry ~" + str.tostring(sn_entry_px, format.mintick)
+        if not na(sn_sl_px)
+            sn_parts := sn_parts + (sn_parts == "" ? "" : " · ") +
+              "SL " + str.tostring(sn_sl_px, format.mintick)
+        if not na(sn_tp2_px)
+            sn_parts := sn_parts + (sn_parts == "" ? "" : " · ") +
+              "TP2 " + str.tostring(sn_tp2_px, format.mintick)
+        sn_txt   = sn_parts == "" ? sn_head : sn_head + "\n" + sn_parts
+        // Anchor at the right edge beside current price; arrow points at it.
+        sn_x     = bar_index + 2
+        sn_y     = na(sn_entry_px) ? close : sn_entry_px
+        sn_bg    = sn_buy ? i_col_buy : i_col_sell
+        sn_style = sn_buy ? label.style_label_lower_left : label.style_label_upper_left
+        if na(setup_note_lbl)
+            setup_note_lbl := label.new(sn_x, sn_y, sn_txt, xloc = xloc.bar_index,
+                                        style = sn_style, color = sn_bg,
+                                        textcolor = color.white, size = size.large)
+        else
+            label.set_xy(setup_note_lbl, sn_x, sn_y)
+            label.set_text(setup_note_lbl, sn_txt)
+            label.set_color(setup_note_lbl, sn_bg)
+            label.set_style(setup_note_lbl, sn_style)
+    else
+        // State left SETUP (or toggle off): delete so no stale note lingers.
+        if not na(setup_note_lbl)
+            label.delete(setup_note_lbl)
+            setup_note_lbl := na
 
 // =====================================================================
 // KILLZONE RENDERING — runs each chart bar, updates each enabled
@@ -2877,17 +3064,13 @@ if i_show_tbl and barstate.islast
         f_cell(rL, 1, str.tostring(final_tp_price, format.mintick), color.lime)
         rL += 1
 
-        // Diagnostic rows — only in multi-position mode (don't clutter 1-pos).
-        // "Add #N" = live reason the NEXT (Nth) entry is/isn't firing this bar;
-        // "Last skip" = last bar where a real setup was blocked by a gate.
+        // Diagnostic row — only in multi-position mode (don't clutter 1-pos).
+        // "Add #N" = live reason the NEXT (Nth) entry is/isn't firing this bar.
         if i_max_pos > 1
             add_live_clr = add_reason_s == "READY (will fire)" ? color.lime :
               add_reason_s == "" ? color.gray : color.orange
             f_cell(rL, 0, "Add #" + str.tostring(active_count + 1), color.white)
             f_cell(rL, 1, add_reason_s == "" ? "—" : add_reason_s, add_live_clr)
-            rL += 1
-            f_cell(rL, 0, "Last skip", color.white)
-            f_cell(rL, 1, last_add_skip_s, last_add_skip_s == "—" ? color.gray : color.orange)
             rL += 1
     else
         // -- FLAT view: PRE-ENTRY CHECKLIST. Each row surfaces the engine's
