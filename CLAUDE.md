@@ -1,4 +1,4 @@
-# Migs — XAUUSD 5m Trading Agent
+# Migs — XAUUSD 15m Trading Agent (BG Golden 15m SMC)
 
 This project hosts Claude Code subagents that work on the Migs trading system:
 
@@ -18,7 +18,7 @@ This project hosts Claude Code subagents that work on the Migs trading system:
 
 ## How to invoke
 
-Drop a 5m + 1H chart screenshot into the conversation (or `screenshots/`) and say:
+Drop a 15m + 1H chart screenshot into the conversation (or `screenshots/`) and say:
 
 > "Migs — grade this setup"           ← full pipeline, writes a journal entry
 > "Migs scout this"  /  "scout"        ← analysis only, NO journal entry
@@ -73,8 +73,8 @@ Migs/
 1. **Two-pass chart reading** — first extract observable primitives (OB bounds, structure levels, DOL prices, swing wick references) as structured JSON. Only then reason about the setup. Never invent levels.
 2. **News gate: DISABLED** (as of 2026-05-21, per user). Trader assumes responsibility for news awareness. Re-enable by reverting this rule and `workflows/news-check.md`.
 3. **Pattern WR gate** — if direction (BUY or SELL) has ≥5 closed trades AND win-rate <40% ⇒ NO TRADE that direction.
-4. **One strategy.** Migs Hybrid is the only strategy. Don't invent setup types. The trader identifies the structural entry; the doctrine prescribes SL/TP/management.
-5. **3-TP / thirds management.** Every trade: TP1=+1R, TP2=+2R, TP3=+3R, 1/3 size at each. Blended +2R when all fill. See `doctrine/migs-hybrid-strategy.md`.
+4. **One strategy, one source of truth.** `TradingView/BG-Golden-Signal-15m-SMC.pine` is the canonical strategy definition (user directive 2026-06-10). The doctrine, the agents, and the MT5 EA conform to the pine's literal input defaults — when anything disagrees with the pine, fix the downstream file, **never edit the pine to match**. The pine itself changes only by explicit trader decision.
+5. **Full size, TP2 final.** Every trade: TP1=+1R (informational), TP2=+2R (final target, full position exits). TP3/trails exist as toggles, off by default. Win +2R / loss −1R. See `doctrine/migs-hybrid-strategy.md`. (Thirds management retired 2026-06-10.)
 6. **One signal per invocation** — fresh context every time. Persist learning to files, not to chat history.
 
 ## Weekly review

@@ -6,23 +6,26 @@ gate**, a mechanical **TP1/TP2/TP3 = +1R/+2R/+3R** ladder, and an optional SL-tr
 
 > **This is the only strategy in the project** (decision 2026-06-10). The 5m EA, the plain 15m EA,
 > Dawn Raider, and the BTC pine were all retired — recover them from git history if ever needed.
+>
+> **The pine is the source of truth** (user directive 2026-06-10): this EA's defaults mirror the
+> pine's literal inputs. When they diverge, fix the EA — never edit the pine to match the EA.
 
 > **Goal:** ≥95% backtest agreement with the TradingView indicator. Every behavioural rule
 > here is copied from the pine — none are invented. See the `// Pine i_*` comment on each input.
 
 ## Status
 
-**Version 0.9.1 — SMC pine literal defaults.** Magic **20261505**, journal dir **`BG\journal-15m-smc`**.
-The trade engine is the BG Golden 15m engine; defaults follow the SMC pine's **literal input
+**Version 0.9.2 — re-synced to the pine source of truth (2026-06-10).** Magic **20261505**,
+journal dir **`BG\journal-15m-smc`**. Defaults follow the SMC pine's **literal input
 declarations**, plus the pine's `g_risk` experiment inputs (all default off).
 
-- **HTF bias gate ON @ H1** (`InpRequireHTF=true`, EMA 12/80) — validated best on 15m. Lenient:
-  trend-match and ranging both allowed, **counter-trend always blocked**.
+- **HTF bias gate ON @ H1** (`InpRequireHTF=true`, EMA 12/80). Lenient: trend-match and ranging
+  both allowed, **counter-trend always blocked**. (Gate-off ran +84R in the pine sim on the same
+  window — MT5 real-tick validation pending before that becomes the default.)
 - **Structure (15m):** BOS age 20, OB age 40, entry proximity 0.4×ATR(14), SL buffer 0.45×ATR,
-  Min-SL clamp $9 / filter $4, cooldown **2 bars**.
-- **Sessions (GMT+8):** Asia 08:00–12:00 **Mon/Tue/Thu/Fri** · London 14:00–17:00 **Tue–Fri** ·
-  NY AM 21:30–23:00 **Mon** · NY Lunch 00:00–01:00 (weekend-only DoW = dead on XAUUSD) ·
-  NY PM 01:30–04:00 **Wed**.
+  Min-SL clamp **$11.5** / filter $4, cooldown **2 bars**.
+- **Sessions (GMT+8):** **London 13:30–20:00 Tue–Fri only.** Asia (08:00–13:00) and all NY
+  killzones are OFF — 2026-06-10 session-stats decision (Asia ≈ breakeven churn).
 
 ## Install
 
@@ -55,7 +58,7 @@ On every **new M15 bar** (signal logic is gated to bar close, mirroring Pine `ba
 5. **Proximity** — price must be within `InpEntryATR × ATR` of the OB edge.
 6. **SL** — beyond the OB edge ± `InpSLBufATR × ATR`. This distance **defines 1R**.
    - **Min-SL filter** (`InpMinSLFilter`, default $4): *reject* the setup if the natural OB SL is tighter.
-   - **Min-SL clamp** (`InpMinSLClamp`, default $9): *widen* the SL to this floor if it's still tighter (trade still fires).
+   - **Min-SL clamp** (`InpMinSLClamp`, default $11.5): *widen* the SL to this floor if it's still tighter (trade still fires).
 7. **TP1/TP2/TP3** = entry ± 1R/2R/3R.
 8. **One position, full size, rides to the highest enabled TP.** No thirds, no partials.
    With the defaults (TP2 on, TP3 off) the trade exits at **+2R**.
@@ -83,7 +86,7 @@ Enable `InpUseTP3` / the move-SL toggles to reshape this exactly as the pine's T
 | `InpEntryATR` | 0.4 | `i_entry_atr` | Entry proximity × ATR |
 | `InpATRPer` | 14 | `i_atr_per` | ATR period |
 | `InpSLBufATR` | 0.45 | `i_sl_buf` | SL buffer × ATR beyond OB |
-| `InpMinSLClamp` | 9.0 | `i_min_sl` | Widen SL to this $ floor |
+| `InpMinSLClamp` | 11.5 | `i_min_sl` | Widen SL to this $ floor |
 | `InpMinSLFilter` | 4.0 | `i_min_sl_flt` | Reject setup if natural SL < this $ |
 
 ### HTF Bias (`g_htf`)
@@ -126,11 +129,11 @@ Enable `InpUseTP3` / the move-SL toggles to reshape this exactly as the pine's T
 | `InpUseSessions` | true | Master session toggle |
 | `InpServerGMTOffset` | 0 | **Your broker's server-clock UTC offset** (GMT+3 → 3, GMT+2 → 2, UTC → 0). Calibrate via the panel's Manila clock |
 | `InpSessionGMTOffset` | 8 | Timezone the session strings are written in (GMT+8 Manila) — leave at 8 |
-| `InpUseAsia` / `InpAsiaSession` | true / `08:00-12:00` | Asia DoW: **Mon/Tue/Thu/Fri** (`InpAsiaDow*`) |
-| `InpUseLondon` / `InpLondonSession` | true / `14:00-17:00` | London DoW: **Tue–Fri** (`InpLondonDow*`) |
-| `InpUseNYAM` / `InpNYAMSession` | true / `21:30-23:00` | NY AM DoW: **Mon** (+Sat/Sun, dead on XAUUSD) |
-| `InpUseNYLunch` / `InpNYLunchSession` | true / `00:00-01:00` | NY Lunch DoW: **Sat/Sun only** → never trades |
-| `InpUseNYPM` / `InpNYPMSession` | true / `01:30-04:00` | NY PM DoW: **Wed** (+Sat/Sun, dead) |
+| `InpUseAsia` / `InpAsiaSession` | **false** / `08:00-13:00` | Asia OFF (all DoW unticked) — 2026-06-10 |
+| `InpUseLondon` / `InpLondonSession` | true / `13:30-20:00` | London DoW: **Tue–Fri** (`InpLondonDow*`) |
+| `InpUseNYAM` / `InpNYAMSession` | **false** / `21:30-23:00` | OFF. DoW: Sat/Sun only (dead) |
+| `InpUseNYLunch` / `InpNYLunchSession` | **false** / `00:00-01:00` | OFF. DoW: Sat/Sun only (dead) |
+| `InpUseNYPM` / `InpNYPMSession` | **false** / `01:30-04:00` | OFF. DoW: Wed/Sat/Sun |
 
 > **⚠️ Broker server time.** MT5's server clock usually isn't UTC. Set **`InpServerGMTOffset`** to
 > your broker's offset; the EA converts server → UTC → GMT+8 so the session windows and every

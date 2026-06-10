@@ -1,32 +1,42 @@
-# Migs Hybrid Strategy — XAUUSD
+# Migs Hybrid Strategy — XAUUSD (BG Golden 15m SMC)
 
 One strategy. Two directions (BUY, SELL). Same management every trade.
 
-This is the authoritative doctrine. All 7 journaled trades to date follow this exact playbook.
+> **SOURCE OF TRUTH (2026-06-10):** `TradingView/BG-Golden-Signal-15m-SMC.pine` is the canonical
+> definition of this strategy. This doctrine, the `migs-trader` agent, and the MT5 EA all conform
+> to the pine's literal input defaults. When they disagree, the pine wins — update the downstream
+> file, never the pine. (The pine is only changed by explicit trader decision, on data.)
+
+This is the authoritative doctrine for discretionary execution. It mirrors the pine engine.
 
 ## 1. Setup
 
 - **Instrument:** XAUUSD
-- **Execution TF:** 5m (primary)
-- **Context TFs:** 15m, 1H (mandatory for bias and structure)
-- **Direction:** trade in the direction HTF bias favors
-- **Activation:** discretionary — the trader identifies a valid structural level on the chart
+- **Execution TF:** 15m (the pine's chart TF)
+- **Context TF:** 1H (EMA 12/80 bias — the pine's HTF gate; counter-trend blocked when gate on, ranging allowed)
+- **Direction:** trade in the direction HTF bias allows
+- **Activation:** the pine's structural sequence (below), executed manually or by the EA
 
-## 2. Entry
+## 2. Entry — BOS → OB retest (the pine's engine)
 
-Buy or sell at a structural level identified on the chart, aligned with HTF (1H) bias.
+The canonical entry is the pine's sequence:
 
-The structural level is whatever the trader recognises as a valid entry zone — supply OB, demand OB, swept liquidity + reclaim, retest of broken structure, range retest, etc. The strategy does not prescribe which structure to use; it prescribes how to size, place stops, and take profit once an entry is identified.
+1. **BOS** — a transition break of the last swing (pivot strength 1): close beyond the swing while the prior close wasn't. BOS stays valid for ≤20 bars.
+2. **OB** — the last opposite-colour candle within 40 bars before the break, anchored when the BOS fires.
+3. **Retest** — price returns to within **0.4 × ATR(14)** of the OB edge, evaluated at bar close.
 
-**Requirement:** the structure must give a definable invalidation level (where SL goes). If you can't anchor SL to structure, no trade.
+All three at a qualifying bar close, inside an enabled killzone, with the bias gate satisfied → entry at that close. One trade per OB (no same-OB re-entry).
+
+**Requirement:** the OB gives the invalidation level (where SL goes). No anchorable OB, no trade.
 
 ## 3. Stop Loss — defines 1R
 
-SL goes beyond the structural level plus a small buffer (typically 2–5 pts on XAUUSD).
+SL goes beyond the OB edge plus **0.45 × ATR(14)** buffer (the pine's `i_sl_buf`).
+
+- **Min-SL clamp $11.5:** if the natural OB stop is tighter, widen to $11.5 (trade still fires).
+- **Min-SL filter $4:** if the natural stop is under $4, skip the trade entirely (all-spread setups).
 
 **The distance from entry to SL is the 1R reference unit for this trade.**
-
-Observed range across 7 journaled trades: 5 pts (tightest) to 25 pts (widest). The strategy does not impose a min/max SL distance — it adapts to the structure.
 
 ## 4. Take Profit — Mechanical 1R / 2R / 3R Ladder
 
@@ -38,30 +48,30 @@ Three targets, computed mechanically from entry and SL distance:
 | **TP2** | Entry ± 2R |
 | **TP3** | Entry ± 3R |
 
-TPs are not anchored to chart levels. They are pure RR multiples. Sometimes TP3 happens to land at a structural level (prior swing extreme, range high/low) — that's geometry, not placement.
+TPs are not anchored to chart levels. They are pure RR multiples. Sometimes a TP happens to land at a structural level (prior swing extreme, range high/low) — that's geometry, not placement.
 
-## 5. Position Management — Thirds
+## 5. Position Management — Full size, TP2 final (pine defaults)
 
-Size in thirds. Close 1/3 of the position at each TP fill.
+**Full position size rides to TP2.** No partials, no thirds. TP1 is informational (it marks +1R progress and feeds the panel's outcome anatomy); TP3 is off by default.
 
-- **At TP1 fill:** close 1/3. (Optional: move SL to BE for the remaining 2/3.)
-- **At TP2 fill:** close 1/3.
-- **At TP3 fill:** close the final 1/3.
-
-**Blended R outcomes:**
+**R outcomes (default config):**
 
 | Scenario | Realized R |
 |---|---|
-| TP1 only, then SL on remaining | (1/3 × 1R) + (2/3 × –1R) = **–0.33R** |
-| TP1 + TP2, then SL on remaining | (1/3 × 1R) + (1/3 × 2R) + (1/3 × –1R) = **+0.67R** |
-| TP1 + TP2 + TP3 (all fill) | (1+2+3) / 3 = **+2.0R** |
-| SL hit before any TP | **–1.0R** |
+| TP2 fills | **+2.0R** |
+| SL hit first | **–1.0R** |
 
-When BE move is used after TP1 (recommended), the worst-case after TP1 fill is –0.0R on remaining = +0.33R blended.
+Optional management toggles exist in the pine/EA (BE after TP1, TP1-lock after TP2, TP3 with trail) — all **off by default**. Enabling any of them is a strategy change: test it in the sim first, then flip the pine default, then sync downstream.
 
-## 6. Sessions
+> *Historical note:* the doctrine prescribed thirds management (1/3 at each TP, blended +2R) through
+> 2026-06-10. Superseded by the pine's full-size/TP2-final model when the pine became source of truth.
+> Old journal entries with blended R stay as recorded.
 
-**Any session.** No restriction. Observed entries across the 7 trades: NY-AM, transition, off-session (Asia pre-London).
+## 6. Sessions — London killzone only
+
+**London killzone, 13:30–20:00 PHT (GMT+8), Tuesday–Friday.** No other sessions.
+
+Asia (08:00–13:00) and all NY killzones are **disabled** as of 2026-06-10 — session-stats analysis over 182 sim trades showed Asia entries ≈ breakeven churn (Asia→in-Asia bucket: 34% of all trades at 34% WR) while London entries carried the system. The killzone windows live in the pine's session inputs; if the pine changes, this section follows.
 
 ## 7. News
 
@@ -82,10 +92,10 @@ The strategy doesn't use a 0–18 rubric. Acceptance is binary:
 
 | Check | Pass condition |
 |---|---|
-| **Direction matches HTF bias** | 1H bias agrees with trade direction |
-| **Structural entry level** | Entry anchored to a visible chart feature (OB, sweep, broken structure, etc.) |
-| **Definable SL** | SL has a structural anchor; 1R distance computable |
-| **TP3 has runway** | No major opposing DOL inside the 3R distance that would block TP3 |
+| **Direction allowed by HTF bias** | 1H bias agrees with trade direction (or 1H is ranging — counter-trend only with the gate off, per pine defaults) |
+| **Structural entry level** | Entry anchored to a visible BOS→OB retest (the pine's sequence) |
+| **Definable SL** | SL = OB edge + 0.45×ATR buffer; 1R distance computable (≥$4 natural, clamped to $11.5 min) |
+| **TP2 has runway** | No major opposing 1H/4H level inside the 2R distance that would block TP2 |
 | **No erratic candles in last 4 bars** | Volatility check |
 | **Extraction confidence ≥0.6** | LLM read of the chart is clear, not ambiguous |
 
@@ -94,15 +104,15 @@ Any fail → NO TRADE.
 ## 10. Signal output format
 
 ```
-XAUUSD — [BUY/SELL] · Migs Hybrid
+XAUUSD — [BUY/SELL] · Migs Hybrid (BG Golden 15m SMC)
 Entry:   [price]
 SL:      [price]   (1R = [X] pts)
-TP1:     [price]   (+1R)
-TP2:     [price]   (+2R)
-TP3:     [price]   (+3R)
-Structure: [one line on what structural level anchors the entry]
-HTF bias:  [bullish | bearish] (1H)
-Size:      1/3 / 1/3 / 1/3 (thirds at each TP)
+TP1:     [price]   (+1R, informational)
+TP2:     [price]   (+2R — FINAL target, full size exits here)
+Structure: [one line: the BOS and the OB anchoring the entry]
+HTF bias:  [bullish | bearish | ranging] (1H)
+Killzone:  London [time] PHT
+Size:      full position to TP2
 Phase:     DEMO (1% risk)
 ```
 
@@ -113,7 +123,7 @@ Phase:     DEMO (1% risk)
 - `direction`, `entry`, `sl`, `tp1`, `tp2`, `tp3`
 - `risk_pips`, `tp1_rr`, `tp2_rr`, `tp3_rr` (always 1.0 / 2.0 / 3.0)
 - `outcome` (TP1_HIT / TP2_HIT / TP3_HIT / SL_HIT / BE / OPEN)
-- `r_realized` (blended R per partial-fill table above)
+- `r_realized` (+2.0 on TP2 / −1.0 on SL under the default config; legacy entries may carry blended thirds values)
 - `mfe_r`, `mae_r`
 - `htf_bias_1h`
 - `chart_features` (structural levels visible at entry)

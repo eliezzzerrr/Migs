@@ -14,8 +14,8 @@ Score each of the 6 criteria 0/1/2. Sum to 12 max.
 |---|---|---|---|---|
 | 1 | **1H bias alignment** | Counter to `htf_bias_1h` (would have failed §9 anyway) | Ranging / unclear 1H | Clean 1H trend in trade direction |
 | 2 | **Structural anchor** | No clean OB or level at entry | Minor level (internal breaker, range edge) | Major OB or swept HTF support/resistance |
-| 3 | **Entry trigger** | Anticipatory fade, no confirmation | Reaction visible (wick rejection) but no BOS through the level | Confirmation candle **and** 5m BOS through the level |
-| 4 | **DOL runway** | Opposing DOL inside 3R blocks TP3 | TP3 reachable, but a level sits between TP2 and TP3 | Clean path to TP3, no opposing DOL inside 3R |
+| 3 | **Entry trigger** | Anticipatory fade, no confirmation | Reaction visible (wick rejection) but no BOS through the level | Confirmation candle **and** 15m BOS through the level |
+| 4 | **DOL runway** | Opposing level inside 2R blocks TP2 | TP2 reachable, but a level sits between TP1 and TP2 | Clean path to TP2, no opposing 1H/4H level inside 2R |
 | 5 | **SL anchor** | Arbitrary distance from price | Beyond level edge, no wick anchor | Beyond level **and** anchored by sweep wick or pivot |
 | 6 | **Invalidation discipline** | 0–1 reasons, narrative only | 2–3 reasons, mixed quality | 3 reasons, ≥1 quantitative and price-testable |
 

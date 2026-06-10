@@ -6,8 +6,8 @@ Patterns are how we learn. Every trade gets exactly one pattern tag. The taxonom
 
 | ID | Name | Match rule |
 |---|---|---|
-| `01` | BUY baseline | Demand OB + bullish 5m BOS, any session, any FVG position |
-| `02` | SELL baseline | Supply OB + bearish 5m BOS, any session, any FVG position |
+| `01` | BUY baseline | Demand OB + bullish 15m BOS, any session, any FVG position |
+| `02` | SELL baseline | Supply OB + bearish 15m BOS, any session, any FVG position |
 | `novel` | Novel | Setup that doesn't cleanly map (rare in Phase 1) |
 
 At weekly review, if a sub-cluster discovered from actual trade data shows a statistically distinct WR, split it out into a new pattern (`03`, `04`, …) and tag prospectively. Never invent sub-patterns from hypothesis — only from observed clusters in the journal.
