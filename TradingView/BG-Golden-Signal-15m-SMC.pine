@@ -6,6 +6,9 @@
 //  borrowed (CC BY-NC-SA 4.0, © LuxAlgo; attribution retained).
 //  XAUUSD-tuned variant of the BG Signals family.
 //  15m-tuned variant. Validated 2026-05-26: London Tue-Fri 1400-1700 PHT, 18 trades, 72.2% WR, +21R. For 5m, use BG-Golden-Signal-5m.pine.
+//  2026-06-10: input DEFAULTS synced to user's live chart — Asia OFF by default
+//    (session 08:00-13:00, all DoW unticked); London 13:30-17:00 Mon-Fri.
+//    NY AM/Lunch/PM, timezone (GMT+8), and box-display defaults unchanged.
 //  Signal-only display. Buy/Sell labels + SL/TP lines + fill markers.
 //
 //  Strategy:
@@ -95,24 +98,24 @@ i_kz_tz        = input.string("GMT+8", "Timezone",
      group=g_sess,
      tooltip="All killzone times below are interpreted in this timezone. Default GMT+8 = PHT (Philippine Time, no DST). Switch to America/New_York if you want session times entered as NY local with DST auto-handled. NOTE: the default session times below are aligned to PHT during NY summer (EDT, Mar-Nov). During NY winter (EST, Nov-Mar) the actual NY sessions land 1 hour later in PHT — adjust the times by +1 hour, or switch the timezone to America/New_York for hands-off DST.")
 
-i_use_asia       = input.bool(true,  "", inline="ASIA",   group=g_sess)
+i_use_asia       = input.bool(false, "", inline="ASIA",   group=g_sess)
 i_asia_txt       = input.string("Asia",      "", inline="ASIA",   group=g_sess)
-i_asia_sess      = input.session("0800-1200", "", inline="ASIA",  group=g_sess)
+i_asia_sess      = input.session("0800-1300", "", inline="ASIA",  group=g_sess)
 i_asia_color     = input.color(color.blue,   "", inline="ASIA",   group=g_sess)
-i_asia_dow_mon   = input.bool(true, "Mon", inline="ASIA_DOW", group=g_sess,
+i_asia_dow_mon   = input.bool(false, "Mon", inline="ASIA_DOW", group=g_sess,
      tooltip="Per-session day-of-week filter for the Asia killzone. Tick days when Asia is ALLOWED to open new trades; untick days when Asia should be SKIPPED. Defaults: all 7 days ticked (no restriction). Existing trades that opened on an allowed day resolve naturally even if the next bar lands on a blocked day. Weekday timezone: Asia/Manila.")
-i_asia_dow_tue   = input.bool(true, "Tue", inline="ASIA_DOW", group=g_sess)
+i_asia_dow_tue   = input.bool(false, "Tue", inline="ASIA_DOW", group=g_sess)
 i_asia_dow_wed   = input.bool(false, "Wed", inline="ASIA_DOW", group=g_sess)
-i_asia_dow_thu   = input.bool(true, "Thu", inline="ASIA_DOW", group=g_sess)
-i_asia_dow_fri   = input.bool(true, "Fri", inline="ASIA_DOW", group=g_sess)
+i_asia_dow_thu   = input.bool(false, "Thu", inline="ASIA_DOW", group=g_sess)
+i_asia_dow_fri   = input.bool(false, "Fri", inline="ASIA_DOW", group=g_sess)
 i_asia_dow_sat   = input.bool(false, "Sat", inline="ASIA_DOW", group=g_sess)
 i_asia_dow_sun   = input.bool(false, "Sun", inline="ASIA_DOW", group=g_sess)
 
 i_use_london     = input.bool(true,  "", inline="LONDON", group=g_sess)
 i_london_txt     = input.string("London",    "", inline="LONDON", group=g_sess)
-i_london_sess    = input.session("1400-1700", "", inline="LONDON", group=g_sess)
+i_london_sess    = input.session("1330-1700", "", inline="LONDON", group=g_sess)
 i_london_color   = input.color(color.red,    "", inline="LONDON", group=g_sess)
-i_london_dow_mon = input.bool(false, "Mon", inline="LONDON_DOW", group=g_sess,
+i_london_dow_mon = input.bool(true,  "Mon", inline="LONDON_DOW", group=g_sess,
      tooltip="Per-session day-of-week filter for the London killzone. Tick days when London is ALLOWED to open new trades; untick days when London should be SKIPPED. Use this to block the 2 losing London weekdays while keeping the 3 profitable ones. Defaults: all 7 days ticked (no restriction). Weekday timezone: Asia/Manila.")
 i_london_dow_tue = input.bool(true,  "Tue", inline="LONDON_DOW", group=g_sess)
 i_london_dow_wed = input.bool(true,  "Wed", inline="LONDON_DOW", group=g_sess)
@@ -425,6 +428,29 @@ type SigState
     // Diagnostic: 2nd/3rd-position skip reasons (read-only).
     string add_reason_s    = ""
     string last_add_skip_s = "—"
+    // -- PRE-ENTRY CHECKLIST (display-only). Surfaces the engine's OWN gate
+    //    evaluations on the last CONFIRMED bar, for the CANDIDATE direction
+    //    (active BOS dir: bull BOS→BUY, bear BOS→SELL; 0 = no active BOS).
+    //    All read-only — no engine behavior depends on them. Used by the
+    //    flat LIVE-TRADE checklist to show what's missing before a fire. --
+    int    cand_dir          = 0       // +1 BUY, -1 SELL, 0 none (no active BOS)
+    bool   chk_killzone      = false   // in_session result (session window + DoW)
+    bool   chk_htf_ok        = false   // candidate-direction HTF agreement
+    bool   chk_bos_active    = false   // candidate-direction BOS still active
+    int    chk_bos_age       = na      // bars since the active BOS (cand dir)
+    bool   chk_ob            = false   // OB anchored for the candidate dir
+    float  chk_ob_edge       = na      // the OB edge price the engine watches
+    bool   chk_price_at_ob   = false   // price within Entry×ATR of the OB edge
+    float  chk_dist_atr      = na      // distance from OB edge in ATR (>=0)
+    bool   chk_cooldown      = true    // cooldown elapsed (mirrors cooldown_ok)
+    int    chk_cool_left     = 0       // bars of cooldown remaining
+    bool   chk_minsl_ok      = false   // natural OB SL distance >= min-SL filter
+    float  chk_minsl_dist    = na      // natural OB-derived SL distance ($)
+    bool   chk_slot_free     = false   // a position slot is available
+    bool   chk_fresh_ob      = false   // candidate OB not already held by a trade
+    bool   chk_day_trades_ok = true    // under per-day open cap (g_risk)
+    bool   chk_day_loss_ok   = true    // today's R hasn't breached loss stop
+    int    chk_day_opens     = 0       // opens today (for "Day cap 1/3")
     // Per-bar event flags (reset each sig-TF bar; latched true if event fired)
     bool   evt_open_long      = false
     bool   evt_open_short     = false
@@ -484,6 +510,29 @@ type SigState
     // Day-of-week (ENTRY day, PHT) W/L, slot 0..4 = Mon..Fri.
     array<int>   dow_w = na   // [5]
     array<int>   dow_l = na   // [5]
+    // -- SESSION BIAS (display-only). Per-session [Asia,London,NY] tally of the
+    //    H1 bias STATE (the SAME variable the engine gates entries with) over
+    //    every confirmed in-range bar whose time falls inside that session's
+    //    TIME window (DoW gating ignored). Full-range running totals: --
+    array<int>   sb_bull  = na   // [3]
+    array<int>   sb_bear  = na   // [3]
+    array<int>   sb_range = na   // [3]
+    // Rolling last-10 PHT-trading-day numbers (already summed across the queue
+    // at render time → surfaced as plain ints here). Per session [3].
+    array<int>   sb10_bull  = na   // [3]
+    array<int>   sb10_bear  = na   // [3]
+    array<int>   sb10_range = na   // [3]
+    int          sb10_days  = 0    // distinct PHT weekdays queued (0..10)
+    // -- ENTRY BIAS SPLIT (display-only). Per-session [Asia,London,NY] closed-
+    //    trade entries classified by the bias STATE at entry vs trade direction:
+    //    MATCHED (long&bull|short&bear), RANGE (bias ranging), COUNTER (gate
+    //    off → wrong-way). _w = WINs among them (same WIN attribution). --
+    array<int>   ebs_match    = na   // [3]
+    array<int>   ebs_match_w  = na   // [3]
+    array<int>   ebs_range    = na   // [3]
+    array<int>   ebs_range_w  = na   // [3]
+    array<int>   ebs_counter  = na   // [3]
+    array<int>   ebs_counter_w = na  // [3]
 
 // =====================================================================
 // SUGGESTIONS UDT + lookup function. Holds the per-TF starting-point
@@ -881,6 +930,40 @@ compute_sig_state() =>
     var array<int> dow_w = array.new<int>(5, 0)  // Mon..Fri
     var array<int> dow_l = array.new<int>(5, 0)
 
+    // -- SESSION BIAS (display-only). Per-session [Asia,London,NY] running
+    //    bias-state tallies over confirmed in-range bars (time windows only).
+    //    Plus a rolling-last-10-PHT-weekday queue: one slot per weekday holding
+    //    that day's {bull,bear,range} bar count per session. On each new PHT
+    //    weekday a fresh 0-slot is pushed (unshift to head) and the oldest
+    //    popped once size > 10; the bar accrues into the HEAD slot. All array
+    //    ops are na-safe (arrays pre-sized; head exists only after the first
+    //    push, guarded below). --
+    var array<int> sb_bull  = array.new<int>(3, 0)
+    var array<int> sb_bear  = array.new<int>(3, 0)
+    var array<int> sb_range = array.new<int>(3, 0)
+    // Queues: 9 parallel int arrays (3 sessions × 3 states), index 0 = newest
+    // day. q_daykey parallels them (the PHT y*10000+m*100+d key per slot) so a
+    // weekday rollover is detected without history refs.
+    var array<int> q_daykey = array.new<int>(0)
+    var array<int> qa_bull  = array.new<int>(0)
+    var array<int> qa_bear  = array.new<int>(0)
+    var array<int> qa_range = array.new<int>(0)
+    var array<int> ql_bull  = array.new<int>(0)
+    var array<int> ql_bear  = array.new<int>(0)
+    var array<int> ql_range = array.new<int>(0)
+    var array<int> qn_bull  = array.new<int>(0)
+    var array<int> qn_bear  = array.new<int>(0)
+    var array<int> qn_range = array.new<int>(0)
+
+    // -- ENTRY BIAS SPLIT (display-only). Per-session [Asia,London,NY] closed-
+    //    trade entry classification + WINs. Booked in the close block. --
+    var array<int> ebs_match     = array.new<int>(3, 0)
+    var array<int> ebs_match_w   = array.new<int>(3, 0)
+    var array<int> ebs_range     = array.new<int>(3, 0)
+    var array<int> ebs_range_w   = array.new<int>(3, 0)
+    var array<int> ebs_counter   = array.new<int>(3, 0)
+    var array<int> ebs_counter_w = array.new<int>(3, 0)
+
     // Realized-equity drawdown (raw points). Tracks the running cumulative
     // sim_total_usd curve: dd_peak_pts is the high-water mark, max_dd_pts
     // the largest peak-to-trough decline seen. Updated once per bar right
@@ -999,6 +1082,83 @@ compute_sig_state() =>
     in_kz_nyam   = not na(time(timeframe.period, i_nyam_sess,   i_kz_tz))
     in_kz_nylu   = not na(time(timeframe.period, i_nylu_sess,   i_kz_tz))
     in_kz_nypm   = not na(time(timeframe.period, i_nypm_sess,   i_kz_tz))
+
+    // -- SESSION BIAS accrual (display-only). On every CONFIRMED in-range bar,
+    //    classify the engine's H1 bias state (the SAME h1_bull/h1_bear the gate
+    //    uses) and tally it into each session whose TIME window contains this
+    //    bar (DoW gating ignored). NY = nyam|nylu|nypm merged. Also maintains a
+    //    rolling 10-PHT-weekday queue. Runs only at confirmed-bar close so the
+    //    counts match the engine's once-per-bar resolution and don't repaint. --
+    if barstate.isconfirmed and in_date_range
+        // Bias state: 0=bull, 1=bear, 2=range. Reuses h1_bull/h1_bear.
+        int bias_state = h1_bull ? 0 : h1_bear ? 1 : 2
+        // Roll the queue on a new PHT WEEKDAY (Mon..Fri only — weekend bars,
+        // if any, accrue into running totals but do NOT open a new day slot).
+        bool sb_is_weekday = bar_dow != dayofweek.saturday and bar_dow != dayofweek.sunday
+        int  sb_daykey = year(time, "Asia/Manila") * 10000 + month_today * 100 + day_today
+        bool sb_head_exists = array.size(q_daykey) > 0
+        bool sb_new_day = sb_is_weekday and (not sb_head_exists or array.get(q_daykey, 0) != sb_daykey)
+        if sb_new_day
+            array.unshift(q_daykey, sb_daykey)
+            array.unshift(qa_bull, 0)
+            array.unshift(qa_bear, 0)
+            array.unshift(qa_range, 0)
+            array.unshift(ql_bull, 0)
+            array.unshift(ql_bear, 0)
+            array.unshift(ql_range, 0)
+            array.unshift(qn_bull, 0)
+            array.unshift(qn_bear, 0)
+            array.unshift(qn_range, 0)
+            if array.size(q_daykey) > 10
+                array.pop(q_daykey)
+                array.pop(qa_bull)
+                array.pop(qa_bear)
+                array.pop(qa_range)
+                array.pop(ql_bull)
+                array.pop(ql_bear)
+                array.pop(ql_range)
+                array.pop(qn_bull)
+                array.pop(qn_bear)
+                array.pop(qn_range)
+        // Only accrue into the queue head once at least one day slot exists.
+        bool sb_can_q = array.size(q_daykey) > 0
+        // Asia
+        if in_kz_asia
+            array.set(sb_bull,  0, array.get(sb_bull,  0) + (bias_state == 0 ? 1 : 0))
+            array.set(sb_bear,  0, array.get(sb_bear,  0) + (bias_state == 1 ? 1 : 0))
+            array.set(sb_range, 0, array.get(sb_range, 0) + (bias_state == 2 ? 1 : 0))
+            if sb_can_q
+                if bias_state == 0
+                    array.set(qa_bull, 0, array.get(qa_bull, 0) + 1)
+                else if bias_state == 1
+                    array.set(qa_bear, 0, array.get(qa_bear, 0) + 1)
+                else
+                    array.set(qa_range, 0, array.get(qa_range, 0) + 1)
+        // London
+        if in_kz_london
+            array.set(sb_bull,  1, array.get(sb_bull,  1) + (bias_state == 0 ? 1 : 0))
+            array.set(sb_bear,  1, array.get(sb_bear,  1) + (bias_state == 1 ? 1 : 0))
+            array.set(sb_range, 1, array.get(sb_range, 1) + (bias_state == 2 ? 1 : 0))
+            if sb_can_q
+                if bias_state == 0
+                    array.set(ql_bull, 0, array.get(ql_bull, 0) + 1)
+                else if bias_state == 1
+                    array.set(ql_bear, 0, array.get(ql_bear, 0) + 1)
+                else
+                    array.set(ql_range, 0, array.get(ql_range, 0) + 1)
+        // NY (AM | Lunch | PM merged) — a single bar can sit in only one NY
+        // sub-window at a time, but OR-merge is safe regardless.
+        if in_kz_nyam or in_kz_nylu or in_kz_nypm
+            array.set(sb_bull,  2, array.get(sb_bull,  2) + (bias_state == 0 ? 1 : 0))
+            array.set(sb_bear,  2, array.get(sb_bear,  2) + (bias_state == 1 ? 1 : 0))
+            array.set(sb_range, 2, array.get(sb_range, 2) + (bias_state == 2 ? 1 : 0))
+            if sb_can_q
+                if bias_state == 0
+                    array.set(qn_bull, 0, array.get(qn_bull, 0) + 1)
+                else if bias_state == 1
+                    array.set(qn_bear, 0, array.get(qn_bear, 0) + 1)
+                else
+                    array.set(qn_range, 0, array.get(qn_range, 0) + 1)
 
     // Per-session day-of-week filter — each killzone independently
     // restricts which weekdays it can OPEN trades on. All 7 ticked =
@@ -1204,6 +1364,55 @@ compute_sig_state() =>
                     sim_count        += 1
                     day_opens_today  += 1
                     evt_open_short   := true
+
+    // -- PRE-ENTRY CHECKLIST evaluation (display-only). Snapshots the engine's
+    //    OWN gate results for the CANDIDATE direction (active BOS dir) so the
+    //    flat LIVE-TRADE band can show what's missing. NOTHING here feeds the
+    //    entry condition — pure read of variables already computed above on
+    //    this confirmed bar. cand_dir: +1 bull BOS→BUY, -1 bear BOS→SELL, 0 =
+    //    no active BOS (direction-dependent rows render "—" downstream).
+    int   cand_dir = active_bull_bos ? 1 : active_bear_bos ? -1 : 0
+    // BOS active + age (candidate dir). bos_bar is the bar the active BOS fired.
+    bool  chk_bos_active = cand_dir != 0
+    int   chk_bos_age    = chk_bos_active and not na(bos_bar) ? bar_index - bos_bar : na
+    // OB anchored for the candidate dir + the edge price the engine watches
+    // (bull retests ob_high from above; bear retests ob_low from below).
+    bool  chk_ob      = cand_dir == 1 ? have_ob_bull : cand_dir == -1 ? have_ob_bear : false
+    float chk_ob_edge = cand_dir == 1 and chk_ob ? ob_high : cand_dir == -1 and chk_ob ? ob_low : na
+    // Price proximity to OB edge, in ATR (>=0). Reuses dist_bull/dist_bear —
+    // the SAME distances near_bull/near_bear threshold against i_entry_atr*ATR.
+    float chk_dist_atr = na
+    if chk_ob and atr_val > 0
+        chk_dist_atr := cand_dir == 1 and not na(dist_bull) ? dist_bull / atr_val :
+          cand_dir == -1 and not na(dist_bear) ? dist_bear / atr_val : na
+    bool  chk_price_at_ob = cand_dir == 1 ? near_bull : cand_dir == -1 ? near_bear : false
+    // HTF agreement for the candidate dir (the SAME h1_ok_bull/bear the gate uses).
+    bool  chk_htf_ok = cand_dir == 1 ? h1_ok_bull : cand_dir == -1 ? h1_ok_bear : false
+    // Cooldown — mirror cooldown_ok; bars remaining when blocked.
+    bool  chk_cooldown  = cooldown_ok
+    int   chk_cool_left = (array.size(active_trades) == 0 and not na(sim_close_bar) and not cooldown_ok) ?
+      math.max(0, i_cooldown - (bar_index - sim_close_bar)) : 0
+    // Min-SL FILTER (reject) check on the NATURAL OB-derived SL distance, for
+    // the candidate dir (BEFORE the clamp). Only meaningful with an OB.
+    float chk_minsl_dist = na
+    if chk_ob
+        chk_minsl_dist := cand_dir == 1 ? (close - (ob_low - i_sl_buf * atr_val)) :
+          (ob_high + i_sl_buf * atr_val) - close
+    bool  chk_minsl_ok = not chk_ob ? false :
+      (i_min_sl_flt <= 0 or (not na(chk_minsl_dist) and chk_minsl_dist >= i_min_sl_flt))
+    // Slot free — capacity available for a new position.
+    bool  chk_slot_free = array.size(active_trades) < i_max_pos
+    // Fresh OB — candidate OB not already held by ANY open position. Evaluated
+    // independently of ob_already_held (which is only set when a trade is open)
+    // so it's correct flat (no trade → always fresh) and in-trade alike.
+    bool  chk_fresh_ob = true
+    if not na(ob_bar) and array.size(active_trades) > 0
+        for ci = 0 to array.size(active_trades) - 1
+            if array.get(active_trades, ci).ob_bar == ob_bar
+                chk_fresh_ob := false
+    // g_risk day gates (mirror day_trades_ok / day_loss_ok above).
+    bool  chk_day_trades_ok = day_trades_ok
+    bool  chk_day_loss_ok   = day_loss_ok
 
     // -- TP / SL chain config (shared across all active trades) --
     // Final-TP classification: which TP closes the trade?
@@ -1508,6 +1717,27 @@ compute_sig_state() =>
                     array.set(ent_by_bucket, eb, array.get(ent_by_bucket, eb) + 1)
                     if was_win
                         array.set(ent_wins_by_bucket, eb, array.get(ent_wins_by_bucket, eb) + 1)
+                // ENTRY BIAS SPLIT (display-only): classify the bias STATE at
+                // entry vs trade direction. RANGE = bias was ranging; MATCHED =
+                // long&bull or short&bear; COUNTER = wrong-way (only reachable
+                // with the HTF gate off). Booked in the SAME bucket (eb) as the
+                // entry-quality stats, with the SAME was_win attribution.
+                if eb >= 0
+                    bool ebs_is_range   = t.bias_at_open == "ranging"
+                    bool ebs_is_matched = (t.is_long and t.bias_at_open == "bullish") or
+                      (not t.is_long and t.bias_at_open == "bearish")
+                    if ebs_is_range
+                        array.set(ebs_range, eb, array.get(ebs_range, eb) + 1)
+                        if was_win
+                            array.set(ebs_range_w, eb, array.get(ebs_range_w, eb) + 1)
+                    else if ebs_is_matched
+                        array.set(ebs_match, eb, array.get(ebs_match, eb) + 1)
+                        if was_win
+                            array.set(ebs_match_w, eb, array.get(ebs_match_w, eb) + 1)
+                    else
+                        array.set(ebs_counter, eb, array.get(ebs_counter, eb) + 1)
+                        if was_win
+                            array.set(ebs_counter_w, eb, array.get(ebs_counter_w, eb) + 1)
                 // Resolution path. "→ in X" requires same PHT day (Asia/London).
                 // NY exception: "→ in NY" = close within 24h of open AND close
                 // bucket == NY (the NY Lunch/PM windows fall on the next PHT
@@ -1584,6 +1814,23 @@ compute_sig_state() =>
     bool   d_tp3_done  = not na(disp) and disp.tp3_done
     string d_bias_open = not na(disp) ? disp.bias_at_open : ""
 
+    // -- SESSION BIAS: sum each session's 10-day queue into plain [3] arrays
+    //    for render. Queue size IS the distinct-weekday count (0..10). --
+    array<int> sb10_bull  = array.new<int>(3, 0)
+    array<int> sb10_bear  = array.new<int>(3, 0)
+    array<int> sb10_range = array.new<int>(3, 0)
+    int sb10_days = array.size(q_daykey)
+    if sb10_days > 0
+        array.set(sb10_bull,  0, int(array.sum(qa_bull)))
+        array.set(sb10_bear,  0, int(array.sum(qa_bear)))
+        array.set(sb10_range, 0, int(array.sum(qa_range)))
+        array.set(sb10_bull,  1, int(array.sum(ql_bull)))
+        array.set(sb10_bear,  1, int(array.sum(ql_bear)))
+        array.set(sb10_range, 1, int(array.sum(ql_range)))
+        array.set(sb10_bull,  2, int(array.sum(qn_bull)))
+        array.set(sb10_bear,  2, int(array.sum(qn_bear)))
+        array.set(sb10_range, 2, int(array.sum(qn_range)))
+
     // -- Build return UDT --
     SigState s = SigState.new()
     s.bull_setup       := bull_setup
@@ -1646,6 +1893,24 @@ compute_sig_state() =>
     s.cooldown_ok      := cooldown_ok
     s.add_reason_s     := add_reason
     s.last_add_skip_s  := last_add_skip
+    s.cand_dir          := cand_dir
+    s.chk_killzone      := in_session
+    s.chk_htf_ok        := chk_htf_ok
+    s.chk_bos_active    := chk_bos_active
+    s.chk_bos_age       := chk_bos_age
+    s.chk_ob            := chk_ob
+    s.chk_ob_edge       := chk_ob_edge
+    s.chk_price_at_ob   := chk_price_at_ob
+    s.chk_dist_atr      := chk_dist_atr
+    s.chk_cooldown      := chk_cooldown
+    s.chk_cool_left     := chk_cool_left
+    s.chk_minsl_ok      := chk_minsl_ok
+    s.chk_minsl_dist    := chk_minsl_dist
+    s.chk_slot_free     := chk_slot_free
+    s.chk_fresh_ob      := chk_fresh_ob
+    s.chk_day_trades_ok := chk_day_trades_ok
+    s.chk_day_loss_ok   := chk_day_loss_ok
+    s.chk_day_opens     := day_opens_today
     s.evt_open_long       := evt_open_long
     s.evt_open_short      := evt_open_short
     s.evt_tp1             := evt_tp1
@@ -1683,6 +1948,19 @@ compute_sig_state() =>
     s.n_overnight         := n_overnight
     s.dow_w               := dow_w
     s.dow_l               := dow_l
+    s.sb_bull             := sb_bull
+    s.sb_bear             := sb_bear
+    s.sb_range            := sb_range
+    s.sb10_bull           := sb10_bull
+    s.sb10_bear           := sb10_bear
+    s.sb10_range          := sb10_range
+    s.sb10_days           := sb10_days
+    s.ebs_match           := ebs_match
+    s.ebs_match_w         := ebs_match_w
+    s.ebs_range           := ebs_range
+    s.ebs_range_w         := ebs_range_w
+    s.ebs_counter         := ebs_counter
+    s.ebs_counter_w       := ebs_counter_w
     s
 
 // =====================================================================
@@ -1754,6 +2032,24 @@ in_session       = st.in_session
 cooldown_ok      = st.cooldown_ok
 add_reason_s     = st.add_reason_s
 last_add_skip_s  = st.last_add_skip_s
+chk_cand_dir     = st.cand_dir
+chk_killzone     = st.chk_killzone
+chk_htf_ok       = st.chk_htf_ok
+chk_bos_active   = st.chk_bos_active
+chk_bos_age      = st.chk_bos_age
+chk_ob           = st.chk_ob
+chk_ob_edge      = st.chk_ob_edge
+chk_price_at_ob  = st.chk_price_at_ob
+chk_dist_atr     = st.chk_dist_atr
+chk_cooldown     = st.chk_cooldown
+chk_cool_left    = st.chk_cool_left
+chk_minsl_ok     = st.chk_minsl_ok
+chk_minsl_dist   = st.chk_minsl_dist
+chk_slot_free    = st.chk_slot_free
+chk_fresh_ob     = st.chk_fresh_ob
+chk_day_trades_ok = st.chk_day_trades_ok
+chk_day_loss_ok  = st.chk_day_loss_ok
+chk_day_opens    = st.chk_day_opens
 
 // Event flags drive all chart-side transitions. With multi-position, bar
 // transitions on sim_long/sim_short would miss back-to-back same-direction
@@ -1843,6 +2139,21 @@ n_same_sess_close  = st.n_same_sess_close
 n_overnight        = st.n_overnight
 sess_dow_w         = st.dow_w
 sess_dow_l         = st.dow_l
+
+// SESSION BIAS + ENTRY BIAS SPLIT (display-only; consumed by the LEFT pair).
+sb_bull            = st.sb_bull
+sb_bear            = st.sb_bear
+sb_range           = st.sb_range
+sb10_bull          = st.sb10_bull
+sb10_bear          = st.sb10_bear
+sb10_range         = st.sb10_range
+sb10_days          = st.sb10_days
+ebs_match          = st.ebs_match
+ebs_match_w        = st.ebs_match_w
+ebs_range          = st.ebs_range
+ebs_range_w        = st.ebs_range_w
+ebs_counter        = st.ebs_counter
+ebs_counter_w      = st.ebs_counter_w
 
 // =====================================================================
 // CHART-SIDE DERIVATIONS — final-TP display
@@ -2322,17 +2633,27 @@ pos_lookup(string s) =>
 // pair's 2 cells, never all 5 columns).
 //
 // Row budget per pair — worst case (all toggles ON):
-//   LEFT  : SETUP hdr+4 (0..4) + LIVE TRADE hdr+9 (5..14) +
-//           TODAY hdr+3 (15..18) + STREAKS hdr+3 (19..22)        = 23 rows
+//   LEFT  : SETUP hdr+4 (absolute 0..4), then the ENTIRE remaining left pair
+//           runs on counter rL (starts at 5) so the variable-height LIVE TRADE
+//           block (flat checklist vs in-trade rows) never collides with TODAY /
+//           STREAKS / the bias sub-bands below it.
+//           LIVE TRADE — FLAT (active_count==0): hdr + Bias + 10 fixed checklist
+//             rows + up to 2 g_risk rows (day-cap / day-loss)        = 1+1+12 = 14
+//           LIVE TRADE — IN-TRADE: hdr + Bias + Bias(now) + Dir/Entry/SL/TP1/
+//             final (5) + (multi-pos) Add/Last skip (2)              = 1+1+1+5+2 = 10
+//           TODAY  hdr+3 = 4 · STREAKS hdr+3 = 4
+//           + (i_show_sess) SESSION BIAS hdr+3 = 4 +
+//             ENTRY BIAS SPLIT hdr + up to 3 rows/session = 1+9      = 10
+//           → flat worst case: 5 + 14 + 4 + 4 + 4 + 10 = 41 rows (ends row 40).
 //   RIGHT : PERFORMANCE hdr+14 (0..14) + SESSIONS hdr+entries(3)+
 //           paths(8)+holds(2)+same(1)+overnight(1) (15..30) +
 //           DoW(5) (31..35)                                       = 36 rows
-//   table height = max(23, 36) = 36. STREAKS is STATICALLY on the LEFT
-//   (left worst case row 22 vs right's 35, so it never makes
-//   the left the tall side). The two pairs each run an INDEPENDENT running
-//   row counter (rL for left STREAKS, rR for right SESSIONS/DoW) so no
-//   toggle combo collides. table.clear wipes the full 5×36 span each render.
-var table tbl = table.new(pos_lookup(i_tbl_pos), 5, 36,
+//   table height = max(41, 36) = 41 → dims 42 for headroom. The whole LEFT
+//   pair below SETUP advances by the LEFT running counter rL; SESSIONS/DoW on
+//   the RIGHT by rR. Independent counters ⇒ no toggle combo (flat/in-trade ×
+//   i_max_pos × g_risk rows × i_show_sess × i_show_dow) collides.
+//   table.clear wipes the full 5×42 span each render.
+var table tbl = table.new(pos_lookup(i_tbl_pos), 5, 42,
                           bgcolor      = color.new(color.black, 20),
                           border_color = color.new(color.gray, 50),
                           border_width = 1,
@@ -2353,6 +2674,15 @@ f_hdr(int _row, string _txt, int _base = 0) =>
     hdr_bg = color.new(#ffd54f, 88)
     table.cell(tbl, _base + 0, _row, _txt, text_color=color.new(#ffd54f, 0), text_size=size.small, text_halign=text.align_left, bgcolor=hdr_bg)
     table.cell(tbl, _base + 1, _row, "",   bgcolor=hdr_bg)
+
+// Pre-entry checklist row (LEFT pair). _state: 1 = pass (green ✓), -1 = fail
+// (red ✗), 0 = not evaluable (gray —). _detail is appended after the glyph.
+// Display-only — surfaces compute_sig_state's gate snapshot.
+f_chk(int _row, string _label, int _state, string _detail) =>
+    glyph = _state == 1 ? "✓ " : _state == -1 ? "✗ " : "— "
+    clr   = _state == 1 ? color.lime : _state == -1 ? color.new(#ef5350, 0) : color.gray
+    table.cell(tbl, 0, _row, _label, text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, _row, glyph + _detail, text_color=clr, text_size=size.small, text_halign=text.align_left)
 
 // Duration formatter: int ms → "Xd Yh" (>=24h) else "Xh Ym". CRITICAL —
 // Pine `/` on two ints returns FLOAT (no int-division operator), so every
@@ -2383,7 +2713,7 @@ net_total_usd_pts = sim_total_usd - (closed_count * i_spread)
 net_total_usd   = net_total_usd_pts * usd_mult
 
 if i_show_tbl and barstate.islast
-    table.clear(tbl, 0, 0, 4, 35)
+    table.clear(tbl, 0, 0, 4, 41)
 
     state_str = switch
         active_count > 0          => "IN-TRADE × " + str.tostring(active_count)
@@ -2501,72 +2831,167 @@ if i_show_tbl and barstate.islast
     f_cell(4, 1, sim_range_str, color.silver)
 
     // -- LIVE TRADE ---------------------------------------------------
-    f_hdr(5, "LIVE TRADE")
+    // The whole LEFT pair below SETUP advances on the running counter rL so
+    // the variable-height LIVE TRADE block (flat checklist vs in-trade rows)
+    // never collides with TODAY / STREAKS / the bias sub-bands below it.
+    int rL = 5
+    f_hdr(rL, "LIVE TRADE")
+    rL += 1
 
     // Bias rows: when in trade, show the bias captured AT TRADE ENTRY
     // (the value the gate actually evaluated to allow the trade) AND the
-    // CURRENT live bias (so a mid-trade flip is visible). When idle, the
-    // entry row shows the current bias and the "now" row stays blank.
+    // CURRENT live bias (so a mid-trade flip is visible). When flat, the
+    // entry row shows the current bias and the "now" row is omitted.
     bias_to_show = active_count > 0 ? bias_at_open : h1_bias_s
     bias_color = bias_to_show == "bullish" ? color.lime :
       bias_to_show == "bearish" ? color.red : color.silver
-    f_cell(6, 0, active_count > 0 ? "Bias @ entry" : "Bias", color.white)
-    f_cell(6, 1, bias_to_show, bias_color)
+    f_cell(rL, 0, active_count > 0 ? "Bias @ entry" : "Bias", color.white)
+    f_cell(rL, 1, bias_to_show, bias_color)
+    rL += 1
 
     if active_count > 0
+        // -- IN-TRADE view (unchanged content) -------------------------
         bias_now_color = h1_bias_s == "bullish" ? color.lime :
           h1_bias_s == "bearish" ? color.red : color.silver
-        f_cell(7, 0, "Bias (now)", color.white)
-        f_cell(7, 1, h1_bias_s, bias_now_color)
+        f_cell(rL, 0, "Bias (now)", color.white)
+        f_cell(rL, 1, h1_bias_s, bias_now_color)
+        rL += 1
 
-    if active_count > 0
         sl_tag = sim_eff_sl_r >= 2.0 ? " (TP2)" :
           sim_eff_sl_r >= 1.0 ? " (TP1)" :
           sim_eff_sl_r >= 0.0 ? " (BE)"  : ""
-        f_cell(8, 0, "Dir (latest)", color.white)
-        f_cell(8, 1, sim_long ? "BUY" : "SELL", sim_long ? color.lime : color.red)
-        f_cell(9, 0, "Entry",   color.white)
-        f_cell(9, 1, str.tostring(sim_entry, format.mintick), color.white)
-        f_cell(10, 0, "SL" + sl_tag, color.white)
-        f_cell(10, 1, str.tostring(sim_eff_sl, format.mintick),
+        f_cell(rL, 0, "Dir (latest)", color.white)
+        f_cell(rL, 1, sim_long ? "BUY" : "SELL", sim_long ? color.lime : color.red)
+        rL += 1
+        f_cell(rL, 0, "Entry",   color.white)
+        f_cell(rL, 1, str.tostring(sim_entry, format.mintick), color.white)
+        rL += 1
+        f_cell(rL, 0, "SL" + sl_tag, color.white)
+        f_cell(rL, 1, str.tostring(sim_eff_sl, format.mintick),
                        sim_eff_sl_r >= 0 ? i_col_be : color.red)
-        f_cell(11, 0, "TP1" + (sim_tp1_done ? " ✓" : ""), color.white)
-        f_cell(11, 1, str.tostring(sim_tp1, format.mintick), sim_tp1_done ? color.gray : color.lime)
-        f_cell(12, 0, final_tp_lbl + " (final)", color.white)
-        f_cell(12, 1, str.tostring(final_tp_price, format.mintick), color.lime)
+        rL += 1
+        f_cell(rL, 0, "TP1" + (sim_tp1_done ? " ✓" : ""), color.white)
+        f_cell(rL, 1, str.tostring(sim_tp1, format.mintick), sim_tp1_done ? color.gray : color.lime)
+        rL += 1
+        f_cell(rL, 0, final_tp_lbl + " (final)", color.white)
+        f_cell(rL, 1, str.tostring(final_tp_price, format.mintick), color.lime)
+        rL += 1
 
-    // Diagnostic rows — only in multi-position mode (don't clutter 1-pos).
-    // "Add #N" = live reason the NEXT (Nth) entry is/isn't firing this bar;
-    // "Last skip" = last bar where a real setup was blocked by a gate.
-    if i_max_pos > 1
-        add_live_clr = add_reason_s == "READY (will fire)" ? color.lime :
-          add_reason_s == "" ? color.gray : color.orange
-        f_cell(13, 0, "Add #" + str.tostring(active_count + 1), color.white)
-        f_cell(13, 1, add_reason_s == "" ? "—" : add_reason_s, add_live_clr)
-        f_cell(14, 0, "Last skip", color.white)
-        f_cell(14, 1, last_add_skip_s, last_add_skip_s == "—" ? color.gray : color.orange)
+        // Diagnostic rows — only in multi-position mode (don't clutter 1-pos).
+        // "Add #N" = live reason the NEXT (Nth) entry is/isn't firing this bar;
+        // "Last skip" = last bar where a real setup was blocked by a gate.
+        if i_max_pos > 1
+            add_live_clr = add_reason_s == "READY (will fire)" ? color.lime :
+              add_reason_s == "" ? color.gray : color.orange
+            f_cell(rL, 0, "Add #" + str.tostring(active_count + 1), color.white)
+            f_cell(rL, 1, add_reason_s == "" ? "—" : add_reason_s, add_live_clr)
+            rL += 1
+            f_cell(rL, 0, "Last skip", color.white)
+            f_cell(rL, 1, last_add_skip_s, last_add_skip_s == "—" ? color.gray : color.orange)
+            rL += 1
+    else
+        // -- FLAT view: PRE-ENTRY CHECKLIST. Each row surfaces the engine's
+        //    own gate evaluation on the last CONFIRMED bar for the CANDIDATE
+        //    direction (active BOS dir). ✓ pass / ✗ fail / — not evaluable.
+        //    No conditions are recomputed here — all read from SigState. ----
+        // Setup / candidate direction.
+        cand_txt = chk_cand_dir == 1 ? "BUY (bull BOS)" :
+          chk_cand_dir == -1 ? "SELL (bear BOS)" : "no BOS"
+        f_chk(rL, "Setup", chk_cand_dir == 0 ? 0 : 1, cand_txt)
+        rL += 1
+
+        // Killzone — session window + DoW result the engine gates on.
+        f_chk(rL, "Killzone", chk_killzone ? 1 : -1,
+          chk_killzone ? session_now : "closed")
+        rL += 1
+
+        // HTF bias — candidate-direction agreement.
+        htf_detail = chk_cand_dir == 0 ? "—" :
+          chk_htf_ok ? h1_bias_s + " ok" : "conflicts (" + h1_bias_s + ")"
+        f_chk(rL, "HTF bias", chk_cand_dir == 0 ? 0 : (chk_htf_ok ? 1 : -1), htf_detail)
+        rL += 1
+
+        // BOS active — candidate dir + age in bars.
+        bos_detail = chk_cand_dir == 0 ? "—" :
+          (chk_cand_dir == 1 ? "bull" : "bear") +
+          (na(chk_bos_age) ? "" : " · " + str.tostring(chk_bos_age) + " bars")
+        f_chk(rL, "BOS active", chk_bos_active ? 1 : 0, bos_detail)
+        rL += 1
+
+        // OB anchored — for the candidate dir, with the watched edge price.
+        ob_detail = chk_cand_dir == 0 ? "—" :
+          chk_ob ? (na(chk_ob_edge) ? "yes" : str.tostring(chk_ob_edge, format.mintick)) :
+          "none"
+        f_chk(rL, "OB anchored", chk_cand_dir == 0 ? 0 : (chk_ob ? 1 : -1), ob_detail)
+        rL += 1
+
+        // Price @ OB — distance from the OB edge in ATR (1 decimal).
+        dist_txt = na(chk_dist_atr) ? "" : str.tostring(chk_dist_atr, "0.0") + " ATR"
+        atob_detail = not chk_ob ? "—" :
+          chk_price_at_ob ? (dist_txt == "" ? "at edge" : dist_txt) :
+          (dist_txt == "" ? "away" : dist_txt + " away")
+        f_chk(rL, "Price @ OB", not chk_ob ? 0 : (chk_price_at_ob ? 1 : -1), atob_detail)
+        rL += 1
+
+        // Cooldown — clear, or bars remaining.
+        cool_detail = chk_cooldown ? "clear" :
+          str.tostring(chk_cool_left) + (chk_cool_left == 1 ? " bar left" : " bars left")
+        f_chk(rL, "Cooldown", chk_cooldown ? 1 : -1, cool_detail)
+        rL += 1
+
+        // Min-SL — natural OB SL distance ($) vs i_min_sl_flt filter.
+        minsl_dist_txt = "$" + str.tostring(chk_minsl_dist, "0.0")
+        minsl_detail = not chk_ob ? "—" :
+          chk_minsl_ok ? minsl_dist_txt :
+          minsl_dist_txt + " < $" + str.tostring(i_min_sl_flt, "0.#")
+        f_chk(rL, "Min-SL", not chk_ob ? 0 : (chk_minsl_ok ? 1 : -1), minsl_detail)
+        rL += 1
+
+        // Slot — capacity for a new position.
+        slot_detail = str.tostring(active_count) + "/" + str.tostring(i_max_pos)
+        f_chk(rL, "Slot", chk_slot_free ? 1 : -1, slot_detail)
+        rL += 1
+
+        // Fresh OB — candidate OB not already traded. Only meaningful with an OB.
+        f_chk(rL, "Fresh OB", not chk_ob ? 0 : (chk_fresh_ob ? 1 : -1),
+          not chk_ob ? "—" : chk_fresh_ob ? "new" : "same OB traded")
+        rL += 1
+
+        // g_risk gates — render ONLY when the corresponding input is enabled.
+        if i_max_day_trades > 0
+            f_chk(rL, "Day cap", chk_day_trades_ok ? 1 : -1,
+              str.tostring(chk_day_opens) + "/" + str.tostring(i_max_day_trades))
+            rL += 1
+        if i_max_day_loss_r > 0
+            f_chk(rL, "Day loss", chk_day_loss_ok ? 1 : -1,
+              str.tostring(day_r_now, "0.0") + "/-" + str.tostring(i_max_day_loss_r, "0.#") + "R")
+            rL += 1
 
     // -- TODAY --------------------------------------------------------
-    f_hdr(15, "TODAY")
+    f_hdr(rL, "TODAY")
+    rL += 1
 
     // Day — merged trades + WR into one row. day_wr reuses the SAME formula
     // and "0.0" format as the old "Day WR" row; the "—"/0.0% guard at zero
     // trades is preserved inside the merged string.
     day_wr = day_count_now > 0 ? day_wins_now * 100.0 / day_count_now : 0.0
     day_wr_str = day_count_now > 0 ? str.tostring(day_wr, "0.0") + "%" : "—"
-    f_cell(16, 0, "Day", color.white)
-    f_cell(16, 1, str.tostring(day_count_now) + " (" + str.tostring(day_wins_now) +
+    f_cell(rL, 0, "Day", color.white)
+    f_cell(rL, 1, str.tostring(day_count_now) + " (" + str.tostring(day_wins_now) +
                   "W/" + str.tostring(day_losses_now) + "L · " + day_wr_str + ")",
                   day_count_now > 0 ? color.white : color.gray)
+    rL += 1
 
-    f_cell(17, 0, "Day R (PHT)", color.white)
-    f_cell(17, 1, str.tostring(day_r_now, "+0.00") + "R",
+    f_cell(rL, 0, "Day R (PHT)", color.white)
+    f_cell(rL, 1, str.tostring(day_r_now, "+0.00") + "R",
                   day_r_now >= 0 ? color.lime : color.red)
+    rL += 1
 
     day_usd_disp = day_usd_now * usd_mult
-    f_cell(18, 0, "Day $ (PHT)", color.white)
-    f_cell(18, 1, (day_usd_disp >= 0 ? "+" : "") + str.tostring(day_usd_disp, "#.##"),
+    f_cell(rL, 0, "Day $ (PHT)", color.white)
+    f_cell(rL, 1, (day_usd_disp >= 0 ? "+" : "") + str.tostring(day_usd_disp, "#.##"),
                   day_usd_disp >= 0 ? i_col_buy : i_col_sell)
+    rL += 1
 
     // -- PERFORMANCE (sim totals) — RIGHT pair (cols 3-4), rows 0..14 -----
     f_hdr(0, "PERFORMANCE", 3)
@@ -2749,12 +3174,11 @@ if i_show_tbl and barstate.islast
                 f_cell(rR, 1, d_txt, d_t == 0 ? color.gray : color.silver, 3)
                 rR += 1
 
-    // -- STREAKS — LEFT pair (cols 0-1). Statically placed below TODAY via
-    //    the LEFT running counter rL (starts at 19, right after Day $ on
-    //    row 18). Independent of the RIGHT pair's rR. Left worst case ends
-    //    at row 22 — always shorter than the right's worst case (35), so
-    //    STREAKS on the left never makes the left the tall side. ----------
-    int rL = 19
+    // -- STREAKS — LEFT pair (cols 0-1). Continues the SAME LEFT running
+    //    counter rL the LIVE TRADE + TODAY blocks advanced (rL is already
+    //    positioned at the next free left row). Independent of the RIGHT
+    //    pair's rR. In the flat checklist worst case the left ends ~row 40
+    //    — still inside the 42-row table; in-trade it ends much higher up. -
     f_hdr(rL, "STREAKS", 0)
     rL += 1
 
@@ -2774,6 +3198,120 @@ if i_show_tbl and barstate.islast
     f_cell(rL, 0, "Streak", color.white, 0)
     f_cell(rL, 1, streak_txt, streak_clr, 0)
     rL += 1
+
+    // -- SESSION BIAS + ENTRY BIAS SPLIT — LEFT pair, below STREAKS, advanced
+    //    by the SAME left running counter rL. Whole block behind i_show_sess
+    //    (parity with the RIGHT SESSIONS band). Moved to the LEFT so the right
+    //    pair doesn't grow past ~36 rows. ----------------------------------
+    if i_show_sess
+        // ===== SESSION BIAS (3 rows): bias climate per session. =====
+        f_hdr(rL, "SESSION BIAS", 0)
+        rL += 1
+        f_sb_label = array.from("Asia", "London", "NY")
+        for bi = 0 to 2
+            int sbu = array.get(sb_bull,  bi)
+            int sbd = array.get(sb_bear,  bi)
+            int sbr = array.get(sb_range, bi)
+            int sb_tot = sbu + sbd + sbr
+            string sb_txt = ""
+            color  sb_clr = color.gray
+            if sb_tot == 0
+                sb_txt := "—"
+            else
+                // Two-way directional read. flat-majority (>=55% of all bars)
+                // reads as chop; otherwise it's a bull-vs-bear race and the pct
+                // is the winner's share of DIRECTIONAL bars only (flat excluded).
+                // side codes: 0=bull, 1=bear, 2=flat.
+                float fr_flat_share = sbr * 1.0 / sb_tot
+                int fr_dir = sbu + sbd
+                int fr_side_c = na
+                int fr_pct = na
+                if fr_flat_share >= 0.55 or fr_dir == 0
+                    fr_side_c := 2
+                    fr_pct := int(math.round(fr_flat_share * 100.0))
+                else
+                    fr_side_c := sbu >= sbd ? 0 : 1
+                    int fr_win = fr_side_c == 0 ? sbu : sbd
+                    fr_pct := int(math.round(fr_win * 100.0 / fr_dir))
+                string fr_side = fr_side_c == 0 ? "bull" : fr_side_c == 1 ? "bear" : "flat"
+                sb_clr := fr_side_c == 0 ? color.lime : fr_side_c == 1 ? color.red : color.gray
+                // Magnitude label from the rendered share.
+                string fr_lab = fr_pct >= 90 ? "Overwhelming" :
+                  fr_pct >= 70 ? "Mostly" :
+                  fr_pct >= 55 ? "Leaning" : "Mixed"
+                string fr_word = fr_side_c == 0 ? "bullish" : fr_side_c == 1 ? "bearish" : "flat"
+                // 10d part: only when ≥1 weekday queued. Same two-way rule,
+                // its own flat check.
+                int s10u = array.get(sb10_bull,  bi)
+                int s10d = array.get(sb10_bear,  bi)
+                int s10r = array.get(sb10_range, bi)
+                int s10_tot = s10u + s10d + s10r
+                if sb10_days == 0 or s10_tot == 0
+                    // No 10d data yet — full-range only.
+                    sb_txt := fr_lab + " " + fr_word +
+                      " · " + str.tostring(fr_pct) + "% (10d: —)"
+                else
+                    float t10_flat_share = s10r * 1.0 / s10_tot
+                    int t10_dir = s10u + s10d
+                    int t10_side_c = na
+                    int t10_pct = na
+                    if t10_flat_share >= 0.55 or t10_dir == 0
+                        t10_side_c := 2
+                        t10_pct := int(math.round(t10_flat_share * 100.0))
+                    else
+                        t10_side_c := s10u >= s10d ? 0 : 1
+                        int t10_win = t10_side_c == 0 ? s10u : s10d
+                        t10_pct := int(math.round(t10_win * 100.0 / t10_dir))
+                    string t10_side = t10_side_c == 0 ? "bull" : t10_side_c == 1 ? "bear" : "flat"
+                    if t10_side_c == fr_side_c
+                        // Same side — compact form.
+                        sb_txt := fr_lab + " " + fr_word +
+                          " · " + str.tostring(fr_pct) + "% (10d: " + str.tostring(t10_pct) + "%)"
+                    else
+                        // Sides diverge — name each explicitly.
+                        sb_txt := fr_lab + " · " + str.tostring(fr_pct) + "% " + fr_side +
+                          " (10d: " + str.tostring(t10_pct) + "% " + t10_side + ")"
+            f_cell(rL, 0, array.get(f_sb_label, bi), color.white, 0)
+            f_cell(rL, 1, sb_txt, sb_clr, 0)
+            rL += 1
+
+        // ===== ENTRY BIAS SPLIT (6+ rows): closed entries by bias state. =====
+        // Per session: a "w/ bias" row (MATCHED) and an "in range" row, each
+        // "<share>% · <WR>% W" of that session's closed entries. A COUNTER row
+        // ("counter-tr") is emitted ONLY when its count > 0 (gate-off case).
+        f_hdr(rL, "ENTRY BIAS SPLIT", 0)
+        rL += 1
+        f_ebs_label = array.from("Asia", "London", "NY")
+        for bi = 0 to 2
+            int em  = array.get(ebs_match,    bi)
+            int emw = array.get(ebs_match_w,  bi)
+            int er  = array.get(ebs_range,    bi)
+            int erw = array.get(ebs_range_w,  bi)
+            int ec  = array.get(ebs_counter,  bi)
+            int ecw = array.get(ebs_counter_w, bi)
+            int ebs_tot = em + er + ec
+            string lab = array.get(f_ebs_label, bi)
+            // w/ bias (MATCHED)
+            string m_txt = ebs_tot == 0 ? "—" :
+              str.tostring(int(math.round(em * 100.0 / ebs_tot))) + "% · " +
+              (em == 0 ? "0" : str.tostring(int(math.round(emw * 100.0 / em)))) + "% W"
+            f_cell(rL, 0, lab + " — w/ bias", color.white, 0)
+            f_cell(rL, 1, m_txt, ebs_tot == 0 ? color.gray : color.silver, 0)
+            rL += 1
+            // in range
+            string r_txt = ebs_tot == 0 ? "—" :
+              str.tostring(int(math.round(er * 100.0 / ebs_tot))) + "% · " +
+              (er == 0 ? "0" : str.tostring(int(math.round(erw * 100.0 / er)))) + "% W"
+            f_cell(rL, 0, lab + " — in range", color.white, 0)
+            f_cell(rL, 1, r_txt, ebs_tot == 0 ? color.gray : color.silver, 0)
+            rL += 1
+            // counter-trend — only when present (gate was off at some entry).
+            if ec > 0
+                string c_txt = str.tostring(int(math.round(ec * 100.0 / ebs_tot))) + "% · " +
+                  str.tostring(int(math.round(ecw * 100.0 / ec))) + "% W"
+                f_cell(rL, 0, lab + " — counter", color.white, 0)
+                f_cell(rL, 1, c_txt, color.orange, 0)
+                rL += 1
 
 // =====================================================================
 // TUNING SUGGESTIONS PANEL
