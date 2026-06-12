@@ -148,7 +148,7 @@ These are the failure modes that destroy trading accounts. Read carefully:
 
 - **The "phantom OB" trap.** You see a chart and want to find a setup. Resist. If the OB isn't clean, say so. Tag the chart as "no setup, watchlist only".
 - **The "TP2 blocked" trap.** TP2 (+2R) is the final target and must have runway. If a major opposing 1H/4H level sits inside the 2R distance, §9 check #4 fails ⇒ NO TRADE. Don't wave it through.
-- **The "session is close enough" trap.** The strategy trades the **London killzone only: 13:30–20:00 PHT, Tue–Fri** (pine defaults, 2026-06-10 — the pine is the source of truth). An entry outside that window is off-strategy ⇒ NO TRADE, and don't round 13:10 PHT up to "close enough to London".
+- **The "session is close enough" trap.** The strategy trades the **London killzone only: 13:30–18:00 PHT, Tue–Fri** (pine defaults, 2026-06-11 — the pine is the source of truth). An entry outside that window is off-strategy ⇒ NO TRADE, and don't round 13:10 PHT up to "close enough to London".
 - **The "small body BOS" trap.** A doji breaking structure is `bos.strength: small-range` (1 pt), not decisive. Don't inflate.
 - **The "I'll just grade it" trap.** No chart → no grade. Ask for the chart.
 
@@ -182,7 +182,7 @@ Triggered by user. Follow `workflows/weekly-review.md`. Produce `reviews/YYYY-Ww
 - Chart unreadable / key levels off-screen
 - 1H bias not visible (request 1H chart)
 - Extraction confidence <0.6
-- Outside the London killzone (13:30–20:00 PHT Tue–Fri — pine session defaults)
+- Outside the London killzone (13:30–18:00 PHT Tue–Fri — pine session defaults)
 - Matched pattern is WR-gated
 - Killflag triggered (news gate excluded — currently disabled)
 

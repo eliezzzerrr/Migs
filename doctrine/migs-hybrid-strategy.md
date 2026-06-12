@@ -69,7 +69,7 @@ Optional management toggles exist in the pine/EA (BE after TP1, TP1-lock after T
 
 ## 6. Sessions — London killzone only
 
-**London killzone, 13:30–20:00 PHT (GMT+8), Tuesday–Friday.** No other sessions.
+**London killzone, 13:30–18:00 PHT (GMT+8), Tuesday–Friday.** No other sessions. (Other killzones may be *enabled* in the pine for chart visibility, but their DoW gates are all cleared — they never trade.)
 
 Asia (08:00–13:00) and all NY killzones are **disabled** as of 2026-06-10 — session-stats analysis over 182 sim trades showed Asia entries ≈ breakeven churn (Asia→in-Asia bucket: 34% of all trades at 34% WR) while London entries carried the system. The killzone windows live in the pine's session inputs; if the pine changes, this section follows.
 

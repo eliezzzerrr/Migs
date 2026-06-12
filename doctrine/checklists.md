@@ -20,7 +20,7 @@ When this checklist passes, the trade is taken. The 12-point rubric in `doctrine
 - ~~High-impact USD/Gold news within ±30 min~~ **DISABLED 2026-05-21** — trader-managed
 - Weekend (Sat 2 AM PHT onward) / Sunday open
 - Erratic candles in last 4× 15m candles (also surfaced as binary check #5)
-- Outside the London killzone 13:30–20:00 PHT Tue–Fri (pine session defaults, 2026-06-10)
+- Outside the London killzone 13:30–18:00 PHT Tue–Fri (pine session defaults, 2026-06-11)
 - Chart resolution too low / key levels off-screen
 - 1H bias not visible and not confidently inferable
 - LLM confidence <0.6 in extracted chart features (also surfaced as binary check #6)

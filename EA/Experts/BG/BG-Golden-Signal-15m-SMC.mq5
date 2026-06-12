@@ -14,6 +14,10 @@
 //|  experiments from the pine's g_risk group (all default off).        |
 //|                                                                    |
 //|  CHANGELOG                                                          |
+//|   v0.9.3 (2026-06-11) — session defaults re-synced to pine:         |
+//|     all killzone enables ON (chart shows boxes) but DoW gates       |
+//|     cleared everywhere except London Tue-Fri → trading is London    |
+//|     13:30-18:00 PHT Tue-Fri only (window shortened from 20:00).     |
 //|   v0.9.2 (2026-06-10) — defaults re-synced to the SMC pine, which   |
 //|     is the SOLE SOURCE OF TRUTH (user directive 2026-06-10: agents  |
 //|     and EAs conform to the pine, never the reverse).                |
@@ -125,8 +129,8 @@
 //|   [✓] IsNewBar() gate around bar-close logic                        |
 //+------------------------------------------------------------------+
 #property copyright "BG"
-#property version   "0.92"
-#property description "BG Golden 15m SMC v0.9.2 — Pine-parity build matching BG-Golden-Signal-15m-SMC.pine (the source of truth)."
+#property version   "0.93"
+#property description "BG Golden 15m SMC v0.9.3 — Pine-parity build matching BG-Golden-Signal-15m-SMC.pine (the source of truth)."
 
 //==================================================================//
 //  INCLUDES                                                          //
@@ -177,7 +181,7 @@ input group "=== Session Filter (Pine: g_sess, default GMT+8 Asia) ==="
 input bool   InpUseSessions       = true;       // Pine i_use_sessions
 input int    InpSessionGMTOffset  = 8;          // Session strings' timezone (GMT+8 Manila) — leave at 8
 input int    InpServerGMTOffset   = 0;          // Broker SERVER clock UTC offset (GMT+3 broker → 3). Calibrate via the panel's Manila clock.
-input bool   InpUseAsia           = false;      // Pine i_use_asia — Asia OFF (2026-06-10 session-stats decision)
+input bool   InpUseAsia           = true;       // Pine i_use_asia — killzone shown; all DoW off = no Asia entries (2026-06-11)
 input string InpAsiaSession       = "08:00-13:00";  // Pine i_asia_sess
 input bool   InpAsiaDowMon        = false;      // Asia day-of-week gate — Pine i_asia_dow_* (GMT+8). All days OFF (Asia disabled)
 input bool   InpAsiaDowTue        = false;
@@ -186,8 +190,8 @@ input bool   InpAsiaDowThu        = false;
 input bool   InpAsiaDowFri        = false;
 input bool   InpAsiaDowSat        = false;
 input bool   InpAsiaDowSun        = false;
-input bool   InpUseLondon         = true;       // London ENABLED — Pine i_use_london. Tue-Fri, 13:30-20:00 (2026-06-10)
-input string InpLondonSession     = "13:30-20:00";
+input bool   InpUseLondon         = true;       // London ENABLED — Pine i_use_london. Tue-Fri, 13:30-18:00 (2026-06-11)
+input string InpLondonSession     = "13:30-18:00";
 input bool   InpLondonDowMon      = false;      // London day-of-week gate — Pine i_london_dow_* (GMT+8). Tue-Fri
 input bool   InpLondonDowTue      = true;
 input bool   InpLondonDowWed      = true;
@@ -195,33 +199,33 @@ input bool   InpLondonDowThu      = true;
 input bool   InpLondonDowFri      = true;
 input bool   InpLondonDowSat      = false;
 input bool   InpLondonDowSun      = false;
-input bool   InpUseNYAM           = false;      // Pine i_use_nyam — NY AM OFF (2026-06-10)
+input bool   InpUseNYAM           = true;       // Pine i_use_nyam — killzone shown; all DoW off = no NY AM entries (2026-06-11)
 input string InpNYAMSession       = "21:30-23:00";  // Pine i_nyam_sess
-input bool   InpNYAMDowMon        = false;      // NY AM day-of-week gate — Pine i_nyam_dow_*. Sat/Sun only (dead on XAUUSD)
+input bool   InpNYAMDowMon        = false;      // NY AM day-of-week gate — Pine i_nyam_dow_*. All days OFF
 input bool   InpNYAMDowTue        = false;
 input bool   InpNYAMDowWed        = false;
 input bool   InpNYAMDowThu        = false;
 input bool   InpNYAMDowFri        = false;
-input bool   InpNYAMDowSat        = true;
-input bool   InpNYAMDowSun        = true;
-input bool   InpUseNYLunch        = false;      // Pine i_use_nylu — NY Lunch OFF (2026-06-10)
+input bool   InpNYAMDowSat        = false;
+input bool   InpNYAMDowSun        = false;
+input bool   InpUseNYLunch        = true;       // Pine i_use_nylu — killzone shown; all DoW off = no NY Lunch entries (2026-06-11)
 input string InpNYLunchSession    = "00:00-01:00";  // Pine i_nylu_sess
 input bool   InpNYLuDowMon        = false;      // NY Lunch day-of-week gate — Pine i_nylu_dow_*. SMC = Sat/Sun only
 input bool   InpNYLuDowTue        = false;
 input bool   InpNYLuDowWed        = false;
 input bool   InpNYLuDowThu        = false;
 input bool   InpNYLuDowFri        = false;
-input bool   InpNYLuDowSat        = true;
-input bool   InpNYLuDowSun        = true;
-input bool   InpUseNYPM           = false;      // Pine i_use_nypm — NY PM OFF (2026-06-10)
+input bool   InpNYLuDowSat        = false;
+input bool   InpNYLuDowSun        = false;
+input bool   InpUseNYPM           = true;       // Pine i_use_nypm — killzone shown; all DoW off = no NY PM entries (2026-06-11)
 input string InpNYPMSession       = "01:30-04:00";  // Pine i_nypm_sess
 input bool   InpNYPMDowMon        = false;      // NY PM day-of-week gate — Pine i_nypm_dow_*. SMC = Wed (+ Sat/Sun, dead on XAUUSD)
 input bool   InpNYPMDowTue        = false;
-input bool   InpNYPMDowWed        = true;
+input bool   InpNYPMDowWed        = false;
 input bool   InpNYPMDowThu        = false;
 input bool   InpNYPMDowFri        = false;
-input bool   InpNYPMDowSat        = true;
-input bool   InpNYPMDowSun        = true;
+input bool   InpNYPMDowSat        = false;
+input bool   InpNYPMDowSun        = false;
 
 input group "=== Date Range (Pine: g_dates; live: disable all) ==="
 input bool   InpUseLast30Days     = true;       // Pine i_use_last30 default
@@ -267,7 +271,7 @@ input color            InpPanelWarnClr     = clrDarkOrange;
 //==================================================================//
 //  CONSTANTS                                                         //
 //==================================================================//
-#define BG_VERSION           "0.9.2"
+#define BG_VERSION           "0.9.3"
 #define PANEL_PREFIX           "BGStatus_"
 #define MAX_BARS_FETCH         500    // hard cap on CopyHigh/Low/Close lookback
 #define HTF_BIAS_CACHE_SECS    60     // re-evaluate HTF bias at this cadence

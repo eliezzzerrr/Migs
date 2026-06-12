@@ -24,8 +24,9 @@ declarations**, plus the pine's `g_risk` experiment inputs (all default off).
   window — MT5 real-tick validation pending before that becomes the default.)
 - **Structure (15m):** BOS age 20, OB age 40, entry proximity 0.4×ATR(14), SL buffer 0.45×ATR,
   Min-SL clamp **$11.5** / filter $4, cooldown **2 bars**.
-- **Sessions (GMT+8):** **London 13:30–20:00 Tue–Fri only.** Asia (08:00–13:00) and all NY
-  killzones are OFF — 2026-06-10 session-stats decision (Asia ≈ breakeven churn).
+- **Sessions (GMT+8):** trading = **London 13:30–18:00 Tue–Fri only.** All killzone enables are
+  ON (so the pine draws every session box) but every DoW gate outside London Tue–Fri is cleared —
+  enabled-but-dayless sessions never trade (2026-06-11; Asia cut per session-stats, ≈ breakeven churn).
 
 ## Install
 
@@ -129,11 +130,11 @@ Enable `InpUseTP3` / the move-SL toggles to reshape this exactly as the pine's T
 | `InpUseSessions` | true | Master session toggle |
 | `InpServerGMTOffset` | 0 | **Your broker's server-clock UTC offset** (GMT+3 → 3, GMT+2 → 2, UTC → 0). Calibrate via the panel's Manila clock |
 | `InpSessionGMTOffset` | 8 | Timezone the session strings are written in (GMT+8 Manila) — leave at 8 |
-| `InpUseAsia` / `InpAsiaSession` | **false** / `08:00-13:00` | Asia OFF (all DoW unticked) — 2026-06-10 |
-| `InpUseLondon` / `InpLondonSession` | true / `13:30-20:00` | London DoW: **Tue–Fri** (`InpLondonDow*`) |
-| `InpUseNYAM` / `InpNYAMSession` | **false** / `21:30-23:00` | OFF. DoW: Sat/Sun only (dead) |
-| `InpUseNYLunch` / `InpNYLunchSession` | **false** / `00:00-01:00` | OFF. DoW: Sat/Sun only (dead) |
-| `InpUseNYPM` / `InpNYPMSession` | **false** / `01:30-04:00` | OFF. DoW: Wed/Sat/Sun |
+| `InpUseAsia` / `InpAsiaSession` | true / `08:00-13:00` | All DoW unticked → never trades |
+| `InpUseLondon` / `InpLondonSession` | true / `13:30-18:00` | London DoW: **Tue–Fri** (`InpLondonDow*`) — the only trading window |
+| `InpUseNYAM` / `InpNYAMSession` | true / `21:30-23:00` | All DoW unticked → never trades |
+| `InpUseNYLunch` / `InpNYLunchSession` | true / `00:00-01:00` | All DoW unticked → never trades |
+| `InpUseNYPM` / `InpNYPMSession` | true / `01:30-04:00` | All DoW unticked → never trades |
 
 > **⚠️ Broker server time.** MT5's server clock usually isn't UTC. Set **`InpServerGMTOffset`** to
 > your broker's offset; the EA converts server → UTC → GMT+8 so the session windows and every
