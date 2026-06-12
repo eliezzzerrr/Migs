@@ -2677,6 +2677,20 @@ var label lbl_tp1 = na
 var label lbl_tp2 = na
 var label lbl_tp3 = na
 
+// Persistent live-trade RR zone boxes. Unlike the per-entry chips above,
+// these reused boxes mirror the pre-entry GET READY / WATCH RR boxes but
+// span the OPEN trade: left edge pinned at the entry bar, geometry STATIC
+// (original entry / original SL / final-TP — does NOT follow the trailing
+// SL), right edge = entry bar + avg WINNING-trade hold in bars. Created on
+// open, right edge refreshed each live bar, deleted on close. Dedicated
+// handles so their lifecycle never collides with watch_rr_*/setup_rr_*.
+var box live_rr_tp_box   = na   // GREEN reward: entry → final TP
+var box live_rr_sl_box   = na   // RED risk:    entry → original SL
+var int live_rr_entry_bar = na  // entry bar = box left edge
+var float live_rr_entry_px = na // captured entry price (static box edge)
+var float live_rr_sl_px    = na // captured ORIGINAL SL (static box edge)
+var float live_rr_tp_px    = na // captured final-TP price (static box edge)
+
 if just_opened_long or just_opened_short
     // Snap the previous trade's chips back to its entry-bar offset so
     // they sit near that trade's entry candle as a clean historical
@@ -2729,6 +2743,44 @@ if just_opened_long or just_opened_short
                           style = label.style_label_left, color = color.new(i_col_buy, 50),
                           textcolor = i_col_text, size = size.small) : na
 
+    // Persistent live-trade RR zone — pin left edge + capture STATIC
+    // geometry (original entry / original SL / final-TP) at open. Width =
+    // avg WINNING-trade hold converted to bars (fallback 8 bars / >=1 bar
+    // clamp below). Replaces any prior live boxes (single displayed trade).
+    if not na(live_rr_tp_box)
+        box.delete(live_rr_tp_box)
+        live_rr_tp_box := na
+    if not na(live_rr_sl_box)
+        box.delete(live_rr_sl_box)
+        live_rr_sl_box := na
+    live_rr_entry_bar := bar_index
+    live_rr_entry_px  := sim_entry
+    live_rr_sl_px     := sim_sl          // ORIGINAL SL (not sim_eff_sl)
+    live_rr_tp_px     := final_tp_price
+    // ms-per-bar from chart TF (guard div-by-zero); avg win hold → bars.
+    live_rr_ms_bar  = timeframe.in_seconds() * 1000
+    live_rr_avg_ms  = n_hold_wins > 0 ? hold_ms_wins / n_hold_wins : 0
+    live_rr_w_raw   = (n_hold_wins > 0 and live_rr_ms_bar > 0) ?
+       math.round(live_rr_avg_ms / live_rr_ms_bar) : 8
+    live_rr_width   = math.max(1, live_rr_w_raw < 1 ? 8 : live_rr_w_raw)
+    live_rr_right0  = live_rr_entry_bar + live_rr_width
+    // P&L-aware tint at birth: a fresh entry is treated as positive (price
+    // not yet adverse), so the reward box is born bright and the risk box
+    // dim — same scheme the per-bar update below maintains. Avoids any flat
+    // 75 leftover fighting the dynamic tint on the very first bar.
+    live_rr_tp_c    = color.new(color.green, 60)
+    live_rr_sl_c    = color.new(color.red,   88)
+    if not na(live_rr_entry_px) and not na(live_rr_tp_px)
+        live_rr_tp_box := box.new(live_rr_entry_bar, live_rr_tp_px, live_rr_right0, live_rr_entry_px,
+                                  xloc      = xloc.bar_index,
+                                  border_width = 0,
+                                  bgcolor   = live_rr_tp_c)
+    if not na(live_rr_entry_px) and not na(live_rr_sl_px)
+        live_rr_sl_box := box.new(live_rr_entry_bar, live_rr_entry_px, live_rr_right0, live_rr_sl_px,
+                                  xloc      = xloc.bar_index,
+                                  border_width = 0,
+                                  bgcolor   = live_rr_sl_c)
+
 // Trail step (TP1→BE, TP2→TP1, TP3→TP2): freeze the current SL segment
 // at this bar and start a new SL line at the trailed eff_sl level. This
 // preserves the historical SL position (line.new is a single rigid
@@ -2758,6 +2810,29 @@ if (sim_long or sim_short) and not na(lbl_sl)
     if not na(lbl_tp3)
         label.set_x(lbl_tp3, bar_index + i_lbl_off)
 
+// Live-trade RR zone: refresh the right edge each bar from the current
+// avg-win-hold (top/bottom + left stay STATIC at the captured open values).
+if (sim_long or sim_short) and (not na(live_rr_tp_box) or not na(live_rr_sl_box))
+    a_ms_bar = timeframe.in_seconds() * 1000
+    a_avg_ms = n_hold_wins > 0 ? hold_ms_wins / n_hold_wins : 0
+    a_w_raw  = (n_hold_wins > 0 and a_ms_bar > 0) ?
+       math.round(a_avg_ms / a_ms_bar) : 8
+    a_width  = math.max(1, a_w_raw < 1 ? 8 : a_w_raw)
+    a_right  = live_rr_entry_bar + a_width
+    // P&L-aware tint: positive = price beyond entry in trade direction.
+    // Winning side renders brighter (transp 60), losing side dimmer (88).
+    live_pnl_pos = sim_long ? close > live_rr_entry_px : close < live_rr_entry_px
+    a_tp_c   = live_pnl_pos ? color.new(color.green, 60) : color.new(color.green, 88)
+    a_sl_c   = live_pnl_pos ? color.new(color.red,   88) : color.new(color.red,   60)
+    if not na(live_rr_tp_box)
+        box.set_lefttop(live_rr_tp_box, live_rr_entry_bar, live_rr_tp_px)
+        box.set_rightbottom(live_rr_tp_box, a_right, live_rr_entry_px)
+        box.set_bgcolor(live_rr_tp_box, a_tp_c)
+    if not na(live_rr_sl_box)
+        box.set_lefttop(live_rr_sl_box, live_rr_entry_bar, live_rr_entry_px)
+        box.set_rightbottom(live_rr_sl_box, a_right, live_rr_sl_px)
+        box.set_bgcolor(live_rr_sl_box, a_sl_c)
+
 if (just_closed_long or just_closed_short) and not na(lbl_sl)
     label.set_x(lbl_sl,  bar_index)
     label.set_x(lbl_tp1, bar_index)
@@ -2765,6 +2840,16 @@ if (just_closed_long or just_closed_short) and not na(lbl_sl)
         label.set_x(lbl_tp2, bar_index)
     if not na(lbl_tp3)
         label.set_x(lbl_tp3, bar_index)
+
+// Live-trade RR zone is a live-only aid — delete both boxes on close so
+// they leave no historical residue (unlike the per-entry chips/lines).
+if just_closed_long or just_closed_short
+    if not na(live_rr_tp_box)
+        box.delete(live_rr_tp_box)
+        live_rr_tp_box := na
+    if not na(live_rr_sl_box)
+        box.delete(live_rr_sl_box)
+        live_rr_sl_box := na
 
 // SL chip retext on trail step (BE / TP1 / TP2)
 if st.evt_trail_step == 1 and not na(lbl_sl)
@@ -2818,6 +2903,15 @@ var line  watch_tp1_line = na
 var label watch_tp1_lbl  = na
 var line  watch_tp2_line = na
 var label watch_tp2_lbl  = na
+// Position-tool RR boxes for the WATCH state — mirror the GET READY block's
+// setup_rr_*_box pair but anchor on the watch_* projected levels instead of
+// setup_*. A WATCH setup is already a valid signal (just awaiting the pullback
+// to the OB), so it renders the same GREEN reward (entry→TP2) and RED risk
+// (entry→SL) boxes at the normal (non-dim) 75 transparency. Dedicated handles
+// (NOT setup_rr_*_box) — the two states are mutually exclusive but separate
+// handles avoid any double-ownership / lifecycle bug.
+var box watch_rr_tp_box = na
+var box watch_rr_sl_box = na
 
 if barstate.islast
     show_watch = i_show_watch and not na(watch_entry_px)
@@ -2826,20 +2920,21 @@ if barstate.islast
         watch_txt  = (watch_dir == 1 ? "WATCH BUY @ " : "WATCH SELL @ ") +
           str.tostring(watch_entry_px, format.mintick)
         if na(watch_line)
-            watch_line := line.new(bar_index, watch_entry_px, bar_index + 1, watch_entry_px,
+            watch_line := line.new(bar_index, watch_entry_px, bar_index + 10, watch_entry_px,
                                    color = watch_clr, style = line.style_dashed, width = 1,
-                                   extend = extend.right)
+                                   extend = extend.none)
         else
-            line.set_xy1(watch_line, bar_index,     watch_entry_px)
-            line.set_xy2(watch_line, bar_index + 1, watch_entry_px)
+            line.set_xy1(watch_line, bar_index,      watch_entry_px)
+            line.set_xy2(watch_line, bar_index + 10, watch_entry_px)
+            line.set_extend(watch_line, extend.none)
             line.set_color(watch_line, watch_clr)
         if na(watch_lbl)
-            watch_lbl := label.new(bar_index + i_lbl_off, watch_entry_px, watch_txt,
+            watch_lbl := label.new(bar_index + 10, watch_entry_px, watch_txt,
                                    style = label.style_label_left,
                                    color = color.new(watch_clr, 50),
                                    textcolor = i_col_text, size = size.small)
         else
-            label.set_xy(watch_lbl, bar_index + i_lbl_off, watch_entry_px)
+            label.set_xy(watch_lbl, bar_index + 10, watch_entry_px)
             label.set_text(watch_lbl, watch_txt)
             label.set_color(watch_lbl, color.new(watch_clr, 50))
 
@@ -2847,20 +2942,21 @@ if barstate.islast
         if not na(watch_sl_px)
             watch_sl_txt = "WATCH SL @ " + str.tostring(watch_sl_px, format.mintick)
             if na(watch_sl_line)
-                watch_sl_line := line.new(bar_index, watch_sl_px, bar_index + 1, watch_sl_px,
+                watch_sl_line := line.new(bar_index, watch_sl_px, bar_index + 10, watch_sl_px,
                                           color = i_col_sell, style = line.style_dashed, width = 1,
-                                          extend = extend.right)
+                                          extend = extend.none)
             else
-                line.set_xy1(watch_sl_line, bar_index,     watch_sl_px)
-                line.set_xy2(watch_sl_line, bar_index + 1, watch_sl_px)
+                line.set_xy1(watch_sl_line, bar_index,      watch_sl_px)
+                line.set_xy2(watch_sl_line, bar_index + 10, watch_sl_px)
+                line.set_extend(watch_sl_line, extend.none)
                 line.set_color(watch_sl_line, i_col_sell)
             if na(watch_sl_lbl)
-                watch_sl_lbl := label.new(bar_index + i_lbl_off, watch_sl_px, watch_sl_txt,
+                watch_sl_lbl := label.new(bar_index + 10, watch_sl_px, watch_sl_txt,
                                           style = label.style_label_left,
                                           color = color.new(i_col_sell, 50),
                                           textcolor = i_col_text, size = size.small)
             else
-                label.set_xy(watch_sl_lbl, bar_index + i_lbl_off, watch_sl_px)
+                label.set_xy(watch_sl_lbl, bar_index + 10, watch_sl_px)
                 label.set_text(watch_sl_lbl, watch_sl_txt)
                 label.set_color(watch_sl_lbl, color.new(i_col_sell, 50))
         else
@@ -2875,20 +2971,21 @@ if barstate.islast
         if not na(watch_tp1_px)
             watch_tp1_txt = "WATCH TP1 @ " + str.tostring(watch_tp1_px, format.mintick)
             if na(watch_tp1_line)
-                watch_tp1_line := line.new(bar_index, watch_tp1_px, bar_index + 1, watch_tp1_px,
+                watch_tp1_line := line.new(bar_index, watch_tp1_px, bar_index + 10, watch_tp1_px,
                                            color = i_col_buy, style = line.style_dashed, width = 1,
-                                           extend = extend.right)
+                                           extend = extend.none)
             else
-                line.set_xy1(watch_tp1_line, bar_index,     watch_tp1_px)
-                line.set_xy2(watch_tp1_line, bar_index + 1, watch_tp1_px)
+                line.set_xy1(watch_tp1_line, bar_index,      watch_tp1_px)
+                line.set_xy2(watch_tp1_line, bar_index + 10, watch_tp1_px)
+                line.set_extend(watch_tp1_line, extend.none)
                 line.set_color(watch_tp1_line, i_col_buy)
             if na(watch_tp1_lbl)
-                watch_tp1_lbl := label.new(bar_index + i_lbl_off, watch_tp1_px, watch_tp1_txt,
+                watch_tp1_lbl := label.new(bar_index + 10, watch_tp1_px, watch_tp1_txt,
                                            style = label.style_label_left,
                                            color = color.new(i_col_buy, 50),
                                            textcolor = i_col_text, size = size.small)
             else
-                label.set_xy(watch_tp1_lbl, bar_index + i_lbl_off, watch_tp1_px)
+                label.set_xy(watch_tp1_lbl, bar_index + 10, watch_tp1_px)
                 label.set_text(watch_tp1_lbl, watch_tp1_txt)
                 label.set_color(watch_tp1_lbl, color.new(i_col_buy, 50))
         else
@@ -2903,20 +3000,21 @@ if barstate.islast
         if not na(watch_tp2_px)
             watch_tp2_txt = "WATCH TP2 @ " + str.tostring(watch_tp2_px, format.mintick)
             if na(watch_tp2_line)
-                watch_tp2_line := line.new(bar_index, watch_tp2_px, bar_index + 1, watch_tp2_px,
+                watch_tp2_line := line.new(bar_index, watch_tp2_px, bar_index + 10, watch_tp2_px,
                                            color = i_col_buy, style = line.style_dashed, width = 1,
-                                           extend = extend.right)
+                                           extend = extend.none)
             else
-                line.set_xy1(watch_tp2_line, bar_index,     watch_tp2_px)
-                line.set_xy2(watch_tp2_line, bar_index + 1, watch_tp2_px)
+                line.set_xy1(watch_tp2_line, bar_index,      watch_tp2_px)
+                line.set_xy2(watch_tp2_line, bar_index + 10, watch_tp2_px)
+                line.set_extend(watch_tp2_line, extend.none)
                 line.set_color(watch_tp2_line, i_col_buy)
             if na(watch_tp2_lbl)
-                watch_tp2_lbl := label.new(bar_index + i_lbl_off, watch_tp2_px, watch_tp2_txt,
+                watch_tp2_lbl := label.new(bar_index + 10, watch_tp2_px, watch_tp2_txt,
                                            style = label.style_label_left,
                                            color = color.new(i_col_buy, 50),
                                            textcolor = i_col_text, size = size.small)
             else
-                label.set_xy(watch_tp2_lbl, bar_index + i_lbl_off, watch_tp2_px)
+                label.set_xy(watch_tp2_lbl, bar_index + 10, watch_tp2_px)
                 label.set_text(watch_tp2_lbl, watch_tp2_txt)
                 label.set_color(watch_tp2_lbl, color.new(i_col_buy, 50))
         else
@@ -2926,6 +3024,45 @@ if barstate.islast
             if not na(watch_tp2_lbl)
                 label.set_xy(watch_tp2_lbl, bar_index, na)
                 label.set_text(watch_tp2_lbl, "")
+
+        // -- RR position-tool boxes (WATCH). Same idiom as the GET READY block's
+        //    setup_rr_*_box, anchored on the watch_* projected levels. Span the
+        //    current bar → +10 bars. GREEN reward (entry→TP2), RED risk (entry→SL).
+        //    Drawn only when BOTH the entry level and the respective target are
+        //    non-na; otherwise that box is cleared so no stale geometry lingers.
+        //    Fixed 75 transparency (live pending setup — no HOLD/PRE-OPEN dim). --
+        watch_rr_left  = bar_index
+        watch_rr_right = bar_index + 10
+        watch_rr_tp_c  = color.new(color.green, 75)
+        watch_rr_sl_c  = color.new(color.red,   75)
+        // Reward box: entry → TP2.
+        if not na(watch_entry_px) and not na(watch_tp2_px)
+            if na(watch_rr_tp_box)
+                watch_rr_tp_box := box.new(watch_rr_left, watch_tp2_px, watch_rr_right, watch_entry_px,
+                                           xloc      = xloc.bar_index,
+                                           border_width = 0,
+                                           bgcolor   = watch_rr_tp_c)
+            else
+                box.set_lefttop(watch_rr_tp_box, watch_rr_left, watch_tp2_px)
+                box.set_rightbottom(watch_rr_tp_box, watch_rr_right, watch_entry_px)
+                box.set_bgcolor(watch_rr_tp_box, watch_rr_tp_c)
+        else if not na(watch_rr_tp_box)
+            box.delete(watch_rr_tp_box)
+            watch_rr_tp_box := na
+        // Risk box: entry → SL.
+        if not na(watch_entry_px) and not na(watch_sl_px)
+            if na(watch_rr_sl_box)
+                watch_rr_sl_box := box.new(watch_rr_left, watch_entry_px, watch_rr_right, watch_sl_px,
+                                           xloc      = xloc.bar_index,
+                                           border_width = 0,
+                                           bgcolor   = watch_rr_sl_c)
+            else
+                box.set_lefttop(watch_rr_sl_box, watch_rr_left, watch_entry_px)
+                box.set_rightbottom(watch_rr_sl_box, watch_rr_right, watch_sl_px)
+                box.set_bgcolor(watch_rr_sl_box, watch_rr_sl_c)
+        else if not na(watch_rr_sl_box)
+            box.delete(watch_rr_sl_box)
+            watch_rr_sl_box := na
     else
         // Not in WATCH (or toggle off): clear so no stale level lingers.
         if not na(watch_line)
@@ -2952,6 +3089,13 @@ if barstate.islast
         if not na(watch_tp2_lbl)
             label.set_xy(watch_tp2_lbl, bar_index, na)
             label.set_text(watch_tp2_lbl, "")
+        // Delete the WATCH RR boxes so no stale geometry lingers off-WATCH.
+        if not na(watch_rr_tp_box)
+            box.delete(watch_rr_tp_box)
+            watch_rr_tp_box := na
+        if not na(watch_rr_sl_box)
+            box.delete(watch_rr_sl_box)
+            watch_rr_sl_box := na
 
 // =====================================================================
 // GET READY note (SETUP state) — ONE prominent live label at the right
