@@ -51,9 +51,9 @@ i_bos_age   = input.int(20,   "Max BOS age (bars)",              minval=1, group
      tooltip="How long a BOS stays \"active\" for setup hunting. Suggested by TF: 1m=150, 5m=30, 15m=20, 30m=15, 1H=10.")
 i_ob_age    = input.int(40,   "Max OB lookback (bars)",          minval=1, group=g_struct,
      tooltip="How far back to scan for the OB candle. Suggested by TF: 1m=300, 5m=60, 15m=40, 30m=30, 1H=25.")
-i_entry_atr = input.float(0.4, "Entry proximity (× ATR)",        minval=0.0, step=0.1, group=g_struct,
-     tooltip="How close price must retrace to the OB edge to fire. 0 = price must touch OB exactly. Suggested by TF: 1m=0.3, 5m=0.5, 15m=0.7, 30m=0.7, 1H=0.7.")
-i_atr_per   = input.int(14,   "ATR period",                      minval=1, group=g_struct,
+i_entry_atr = input.float(0.4, "Entry proximity (× ATR)",        minval=0.1, step=0.1, group=g_struct,
+     tooltip="How close price must retrace to the OB edge to fire. Suggested by TF: 1m=0.3, 5m=0.5, 15m=0.7, 30m=0.7, 1H=0.7. minval=0.1: 0 makes entries impossible (price can never be within 0 ATR), silently wiping every sim trade on recalc.")
+i_atr_per   = input.int(14,   "ATR period",                      minval=2, group=g_struct,
      tooltip="Volatility smoothing for SL buffer and entry proximity. Suggested by TF: 1m=50, 5m=14, 15m=14, 30m=14, 1H=14.")
 i_sl_buf    = input.float(0.45, "SL buffer (× ATR beyond OB)",   minval=0.0, step=0.05, group=g_struct,
      tooltip="Pads SL past the OB extreme to avoid wick stops. Suggested by TF: 1m=0.1, 5m=0.1, 15m=0.15, 30m=0.15, 1H=0.2.")
@@ -98,7 +98,7 @@ i_kz_tz        = input.string("GMT+8", "Timezone",
      group=g_sess,
      tooltip="All killzone times below are interpreted in this timezone. Default GMT+8 = PHT (Philippine Time, no DST). Switch to America/New_York if you want session times entered as NY local with DST auto-handled. NOTE: the default session times below are aligned to PHT during NY summer (EDT, Mar-Nov). During NY winter (EST, Nov-Mar) the actual NY sessions land 1 hour later in PHT — adjust the times by +1 hour, or switch the timezone to America/New_York for hands-off DST.")
 
-i_use_asia       = input.bool(false, "", inline="ASIA",   group=g_sess)
+i_use_asia       = input.bool(true,  "", inline="ASIA",   group=g_sess)
 i_asia_txt       = input.string("Asia",      "", inline="ASIA",   group=g_sess)
 i_asia_sess      = input.session("0800-1300", "", inline="ASIA",  group=g_sess)
 i_asia_color     = input.color(color.blue,   "", inline="ASIA",   group=g_sess)
@@ -113,7 +113,7 @@ i_asia_dow_sun   = input.bool(false, "Sun", inline="ASIA_DOW", group=g_sess)
 
 i_use_london     = input.bool(true,  "", inline="LONDON", group=g_sess)
 i_london_txt     = input.string("London",    "", inline="LONDON", group=g_sess)
-i_london_sess    = input.session("1330-2000", "", inline="LONDON", group=g_sess)
+i_london_sess    = input.session("1330-1800", "", inline="LONDON", group=g_sess)
 i_london_color   = input.color(color.red,    "", inline="LONDON", group=g_sess)
 i_london_dow_mon = input.bool(false, "Mon", inline="LONDON_DOW", group=g_sess,
      tooltip="Per-session day-of-week filter for the London killzone. Tick days when London is ALLOWED to open new trades; untick days when London should be SKIPPED. Use this to block the 2 losing London weekdays while keeping the 3 profitable ones. Defaults: all 7 days ticked (no restriction). Weekday timezone: Asia/Manila.")
@@ -124,7 +124,7 @@ i_london_dow_fri = input.bool(true,  "Fri", inline="LONDON_DOW", group=g_sess)
 i_london_dow_sat = input.bool(false, "Sat", inline="LONDON_DOW", group=g_sess)
 i_london_dow_sun = input.bool(false, "Sun", inline="LONDON_DOW", group=g_sess)
 
-i_use_nyam       = input.bool(false, "", inline="NYAM",   group=g_sess)
+i_use_nyam       = input.bool(true,  "", inline="NYAM",   group=g_sess)
 i_nyam_txt       = input.string("NY AM",     "", inline="NYAM",   group=g_sess)
 i_nyam_sess      = input.session("2130-2300", "", inline="NYAM",  group=g_sess)
 i_nyam_color     = input.color(#089981,      "", inline="NYAM",   group=g_sess)
@@ -134,10 +134,10 @@ i_nyam_dow_tue   = input.bool(false, "Tue", inline="NYAM_DOW", group=g_sess)
 i_nyam_dow_wed   = input.bool(false, "Wed", inline="NYAM_DOW", group=g_sess)
 i_nyam_dow_thu   = input.bool(false, "Thu", inline="NYAM_DOW", group=g_sess)
 i_nyam_dow_fri   = input.bool(false, "Fri", inline="NYAM_DOW", group=g_sess)
-i_nyam_dow_sat   = input.bool(true, "Sat", inline="NYAM_DOW", group=g_sess)
-i_nyam_dow_sun   = input.bool(true, "Sun", inline="NYAM_DOW", group=g_sess)
+i_nyam_dow_sat   = input.bool(false, "Sat", inline="NYAM_DOW", group=g_sess)
+i_nyam_dow_sun   = input.bool(false, "Sun", inline="NYAM_DOW", group=g_sess)
 
-i_use_nylu       = input.bool(false, "", inline="NYLU",   group=g_sess)
+i_use_nylu       = input.bool(true,  "", inline="NYLU",   group=g_sess)
 i_nylu_txt       = input.string("NY Lunch",  "", inline="NYLU",   group=g_sess)
 i_nylu_sess      = input.session("0000-0100", "", inline="NYLU",  group=g_sess)
 i_nylu_color     = input.color(color.yellow, "", inline="NYLU",   group=g_sess)
@@ -147,25 +147,25 @@ i_nylu_dow_tue   = input.bool(false, "Tue", inline="NYLU_DOW", group=g_sess)
 i_nylu_dow_wed   = input.bool(false, "Wed", inline="NYLU_DOW", group=g_sess)
 i_nylu_dow_thu   = input.bool(false, "Thu", inline="NYLU_DOW", group=g_sess)
 i_nylu_dow_fri   = input.bool(false, "Fri", inline="NYLU_DOW", group=g_sess)
-i_nylu_dow_sat   = input.bool(true, "Sat", inline="NYLU_DOW", group=g_sess)
-i_nylu_dow_sun   = input.bool(true, "Sun", inline="NYLU_DOW", group=g_sess)
+i_nylu_dow_sat   = input.bool(false, "Sat", inline="NYLU_DOW", group=g_sess)
+i_nylu_dow_sun   = input.bool(false, "Sun", inline="NYLU_DOW", group=g_sess)
 
-i_use_nypm       = input.bool(false, "", inline="NYPM",   group=g_sess)
+i_use_nypm       = input.bool(true,  "", inline="NYPM",   group=g_sess)
 i_nypm_txt       = input.string("NY PM",     "", inline="NYPM",   group=g_sess)
 i_nypm_sess      = input.session("0130-0400", "", inline="NYPM",  group=g_sess)
 i_nypm_color     = input.color(color.purple, "", inline="NYPM",   group=g_sess)
 i_nypm_dow_mon   = input.bool(false, "Mon", inline="NYPM_DOW", group=g_sess,
      tooltip="Per-session day-of-week filter for the NY PM killzone. Same semantics as the Asia/London filters. Defaults: all 7 days ticked. Weekday timezone: Asia/Manila.")
 i_nypm_dow_tue   = input.bool(false, "Tue", inline="NYPM_DOW", group=g_sess)
-i_nypm_dow_wed   = input.bool(true, "Wed", inline="NYPM_DOW", group=g_sess)
+i_nypm_dow_wed   = input.bool(false, "Wed", inline="NYPM_DOW", group=g_sess)
 i_nypm_dow_thu   = input.bool(false, "Thu", inline="NYPM_DOW", group=g_sess)
 i_nypm_dow_fri   = input.bool(false, "Fri", inline="NYPM_DOW", group=g_sess)
-i_nypm_dow_sat   = input.bool(true, "Sat", inline="NYPM_DOW", group=g_sess)
-i_nypm_dow_sun   = input.bool(true, "Sun", inline="NYPM_DOW", group=g_sess)
+i_nypm_dow_sat   = input.bool(false, "Sat", inline="NYPM_DOW", group=g_sess)
+i_nypm_dow_sun   = input.bool(false, "Sun", inline="NYPM_DOW", group=g_sess)
 
 i_box_trans    = input.int(80, "Box Transparency",  minval=0, maxval=100, group=g_sess)
 i_text_trans   = input.int(50, "Text Transparency", minval=0, maxval=100, group=g_sess)
-i_kz_max_days  = input.int(25, "Killzone history (sessions kept)", minval=1, group=g_sess,
+i_kz_max_days  = input.int(100, "Killzone history (sessions kept)", minval=1, group=g_sess,
      tooltip="How many of the most recent killzone boxes to keep on the chart, per session. Older boxes are auto-pruned.")
 
 g_dates        = "Backtest Date Range"
@@ -201,6 +201,8 @@ i_show_watch = input.bool(true, "Show potential entry (WATCH state)", group=g_di
      tooltip="When the State is WATCH·BUY / WATCH·SELL, draw a dashed line + price label at the level the engine is waiting for (OB edge ± Entry-proximity×ATR). The setup fires when price reaches this level. Note: the trade still has to pass the Min-SL filter when it triggers.")
 i_show_setup_note = input.bool(true, "Show GET READY note (SETUP state)", group=g_disp,
      tooltip="When the State reaches SETUP·BUY / SETUP·SELL — price is within Entry-proximity of the OB and every gate (session, date, cooldown, day limits, HTF bias) is green — draw ONE bold 'GET READY' label at the right edge of the chart, beside current price. This marks a signal as IMMINENT (the sim fires the moment the confirmed bar triggers). Shows the projected entry / SL / TP2 from the same watch_* levels the WATCH line uses. Live-only (tracks the last bar); never paints historical SETUP bars.")
+i_ready_release = input.float(0.8, "GET READY release (× ATR)", minval=0.4, step=0.1, group=g_disp,
+     tooltip="DISPLAY-ONLY hysteresis (does NOT touch the 0.4-ATR firing engine). The GET READY label SHOWS the instant price enters Entry-proximity of the OB (the real SETUP/ADD-ready condition). Once shown, it does NOT vanish the moment price ticks back outside that band — instead it HOLDS (dimmed, '(near)' appended) until price drifts farther than this multiple of ATR from the OB edge, OR the setup hard-dies (OB aged/replaced, killzone closed, slot taken, trade fired, BOS gone). Must be ≥ the Entry-proximity (0.4). Larger = stickier label / fewer flickers; the imminent-approach alert still fires only once per genuine approach and re-arms only after a full HIDE.")
 i_show_breakdown = input.bool(true, "Show session/weekday R breakdown", group=g_disp,
      tooltip="Optional panel attributing realized R and trade count to the session and the weekday each trade OPENED in (data-driven from the sim itself, no priors). Σ(session R)=Σ(weekday R)=gross Total R. Default OFF.")
 i_bd_pos    = input.string("bottom_left", "Breakdown panel position",
@@ -275,7 +277,7 @@ i_smc_ob_extend_bars = input.int(0, "OB: cap right-extension (bars, 0=full)", mi
 i_smc_ob_active_only = input.bool(false, "OB: active-BOS only (prune aged)", group=g_smc,
      tooltip="NOISE FILTER. When ON, an OB box is deleted once its originating BOS ages out (older than 'Max BOS age' bars), so only OBs from still-active structure remain. Off by default (boxes persist until mitigated or FIFO-pruned).")
 i_smc_ob_trans = input.int(80, "OB box transparency", minval=0, maxval=100, group=g_smc,
-     tooltip="Transparency of the OB box fill (LuxAlgo default ~80). 0 = opaque, 100 = invisible.")
+     tooltip="Transparency of the OB box fill (LuxAlgo default ~80). 0 = opaque, 100 = invisible. An OB that has produced a trade is recolored BLUE (same transparency) for the rest of its life — see the SAME-OB rule.")
 i_smc_col_bull = input.color(color.new(#26a69a, 0), "Structure/OB bull color (override)", group=g_smc,
      tooltip="Color for bullish structure lines/labels and demand OB boxes. Defaults to the Buy accent; change to override independently of the signal colors.")
 i_smc_col_bear = input.color(color.new(#ef5350, 0), "Structure/OB bear color (override)", group=g_smc,
@@ -319,6 +321,10 @@ type Trade
     bool   tp1_done      = false
     bool   tp2_done      = false
     bool   tp3_done      = false
+    // Outcome-anatomy flag (display-only): set when, AFTER TP1 filled, the
+    // bar's H/L retraced all the way back to entry (BE) before the trade
+    // went on to a TP2 win. Booked into n_win_tp1_be_tp2 at close.
+    bool   be_dip_after_tp1 = false
     int    open_bar      = 0
     int    open_time     = na
     int    open_day      = 0
@@ -390,6 +396,15 @@ type SigState
     bool   sim_tp2_done  = false
     bool   sim_tp3_done  = false
     int    active_count  = 0
+    // Per-slot live entries for the LIVE TRADE band's "Entry #N" rows
+    // (display-only). Slot 0 = oldest open order (#1) … up to 3 shown.
+    // entry price + open_time (ms) per slot; na in unused slots.
+    float  slot1_entry   = na
+    float  slot2_entry   = na
+    float  slot3_entry   = na
+    int    slot1_opentm  = na
+    int    slot2_opentm  = na
+    int    slot3_opentm  = na
     // Sim aggregates
     int    sim_count     = 0
     int    sim_wins      = 0
@@ -416,6 +431,8 @@ type SigState
     int    n_loss_near    = 0   // loss, MFE_R >= i_near_tp2 (hairline miss)
     int    n_loss_aftertp1 = 0  // loss, 1.0 <= MFE_R < i_near_tp2
     int    n_loss_straight = 0  // loss, MFE_R < 1.0
+    // Sub-slice of n_win_tp2: TP2 wins that dipped back to BE after TP1 first.
+    int    n_win_tp1_be_tp2 = 0
     int    sum_hold_ms    = 0
     // Day aggregates (PHT open-day attribution)
     float  day_r_today      = 0.0
@@ -449,28 +466,36 @@ type SigState
     //    evaluations on the last CONFIRMED bar, for the CANDIDATE direction
     //    (active BOS dir: bull BOS→BUY, bear BOS→SELL; 0 = no active BOS).
     //    All read-only — no engine behavior depends on them. Used by the
-    //    flat LIVE-TRADE checklist to show what's missing before a fire. --
-    int    cand_dir          = 0       // +1 BUY, -1 SELL, 0 none (no active BOS)
-    bool   chk_killzone      = false   // in_session result (session window + DoW)
-    bool   chk_htf_ok        = false   // candidate-direction HTF agreement
-    bool   chk_bos_active    = false   // candidate-direction BOS still active
-    int    chk_bos_age       = na      // bars since the active BOS (cand dir)
-    bool   chk_ob            = false   // OB anchored for the candidate dir
-    float  chk_ob_edge       = na      // the OB edge price the engine watches
-    bool   chk_price_at_ob   = false   // price within Entry×ATR of the OB edge
-    float  chk_dist_atr      = na      // distance from OB edge in ATR (>=0)
-    bool   chk_cooldown      = true    // cooldown elapsed (mirrors cooldown_ok)
-    int    chk_cool_left     = 0       // bars of cooldown remaining
-    bool   chk_minsl_ok      = false   // natural OB SL distance >= min-SL filter
-    float  chk_minsl_dist    = na      // natural OB-derived SL distance ($)
-    bool   chk_slot_free     = false   // a position slot is available
-    bool   chk_fresh_ob      = false   // candidate OB not already held by a trade
-    bool   chk_day_trades_ok = true    // under per-day open cap (g_risk)
-    bool   chk_day_loss_ok   = true    // today's R hasn't breached loss stop
-    int    chk_day_opens     = 0       // opens today (for "Day cap 1/3")
+    //    flat LIVE-TRADE checklist to show what's missing before a fire.
+    //    PACKED into a single array<float> to stay under the UDT external-
+    //    element limit (each scalar field costs 2 elements; one array costs 1).
+    //    Bools are stored 0.0/1.0; na-able numerics keep na. Index constants
+    //    (CHK_*) below; semantics IDENTICAL to the former scalar fields. --
+    //      0 cand_dir        +1 BUY, -1 SELL, 0 none (no active BOS)
+    //      1 chk_killzone    in_session result (session window + DoW)
+    //      2 chk_htf_ok      candidate-direction HTF agreement
+    //      3 chk_bos_active  candidate-direction BOS still active
+    //      4 chk_bos_age     bars since the active BOS (cand dir); na none
+    //      5 chk_ob          OB anchored for the candidate dir
+    //      6 chk_ob_edge     the OB edge price the engine watches; na none
+    //      7 chk_price_at_ob price within Entry×ATR of the OB edge
+    //      8 chk_dist_atr    distance from OB edge in ATR (>=0); na none
+    //      9 chk_cooldown    cooldown elapsed (mirrors cooldown_ok)
+    //     10 chk_cool_left   bars of cooldown remaining
+    //     11 chk_minsl_ok    natural OB SL distance >= min-SL filter
+    //     12 chk_minsl_dist  natural OB-derived SL distance ($); na none
+    //     13 chk_slot_free   a position slot is available
+    //     14 chk_fresh_ob    candidate OB not already held by a trade
+    //     15 chk_day_trades_ok under per-day open cap (g_risk)
+    //     16 chk_day_loss_ok   today's R hasn't breached loss stop
+    //     17 chk_day_opens     opens today (for "Day cap 1/3")
+    array<float> chk_pack = na
     // Per-bar event flags (reset each sig-TF bar; latched true if event fired)
     bool   evt_open_long      = false
     bool   evt_open_short     = false
+    // OB origin bar of the trade that opened this bar (display-only; lets the
+    // chart side recolor the matching OB box BLUE to mark it "used").
+    int    evt_open_ob_bar    = na
     bool   evt_tp1            = false
     bool   evt_tp2            = false
     bool   evt_tp3            = false
@@ -550,6 +575,27 @@ type SigState
     array<int>   ebs_range_w  = na   // [3]
     array<int>   ebs_counter  = na   // [3]
     array<int>   ebs_counter_w = na  // [3]
+
+// Index constants for SigState.chk_pack (PRE-ENTRY CHECKLIST). Bools packed
+// as 0.0/1.0; na-able numerics keep na. Order matches the doc block above.
+CHK_CAND_DIR        = 0
+CHK_KILLZONE        = 1
+CHK_HTF_OK          = 2
+CHK_BOS_ACTIVE      = 3
+CHK_BOS_AGE         = 4
+CHK_OB              = 5
+CHK_OB_EDGE         = 6
+CHK_PRICE_AT_OB     = 7
+CHK_DIST_ATR        = 8
+CHK_COOLDOWN        = 9
+CHK_COOL_LEFT       = 10
+CHK_MINSL_OK        = 11
+CHK_MINSL_DIST      = 12
+CHK_SLOT_FREE       = 13
+CHK_FRESH_OB        = 14
+CHK_DAY_TRADES_OK   = 15
+CHK_DAY_LOSS_OK     = 16
+CHK_DAY_OPENS       = 17
 
 // =====================================================================
 // SUGGESTIONS UDT + lookup function. Holds the per-TF starting-point
@@ -674,8 +720,7 @@ method update_kz(KZ this) =>
                           text_color   = text_c,
                           text_halign  = text.align_center,
                           text_valign  = text.align_center,
-                          text_size    = size.huge,
-                          text_wrap    = text.wrap_auto)
+                          text_size    = size.normal)
         array.unshift(this.boxes, new_box)
         if array.size(this.boxes) > i_kz_max_days
             box.delete(array.pop(this.boxes))
@@ -684,6 +729,12 @@ method update_kz(KZ this) =>
         box.set_right(b, time)
         box.set_top(b,    math.max(box.get_top(b),    high))
         box.set_bottom(b, math.min(box.get_bottom(b), low))
+        // -- Text scales with box width. Pine has no size.auto for box text
+        //    (that's table-cell only), so step text_size off the live bar
+        //    span of the session box each bar as it extends. --
+        kz_bars = (box.get_right(b) - box.get_left(b)) / (time - time[1])
+        box.set_text_size(b, kz_bars < 3 ? size.normal :
+                             kz_bars < 6 ? size.large : size.huge)
     this.was_in_sess := in_sess
 
 // =====================================================================
@@ -794,6 +845,11 @@ compute_sig_state() =>
     // direction to the stored bias is a CHoCH; a same-direction break is a
     // plain BOS. No separate LuxAlgo trend engine — derived purely from BG.
     var int last_bos_dir = 0
+    // Latch the MOST-RECENT break's CHoCH classification (var, function-local,
+    // not surfaced to SigState). Lets the Add-row diagnostic name the break
+    // correctly as "CHoCH" vs "BOS" at a later bar — smc_choch itself is a
+    // per-bar bool that's false on every non-break bar.
+    var bool last_break_choch = false
 
     bool  smc_bos_bull  = bull_bos
     bool  smc_bos_bear  = bear_bos
@@ -802,15 +858,17 @@ compute_sig_state() =>
     int   smc_bos_from  = na
 
     if bull_bos
-        smc_choch     := last_bos_dir == -1
-        smc_bos_level := last_sh
-        smc_bos_from  := last_sh_bi
-        last_bos_dir  := 1
+        smc_choch        := last_bos_dir == -1
+        smc_bos_level    := last_sh
+        smc_bos_from     := last_sh_bi
+        last_bos_dir     := 1
+        last_break_choch := smc_choch
     else if bear_bos
-        smc_choch     := last_bos_dir == 1
-        smc_bos_level := last_sl
-        smc_bos_from  := last_sl_bi
-        last_bos_dir  := -1
+        smc_choch        := last_bos_dir == 1
+        smc_bos_level    := last_sl
+        smc_bos_from     := last_sl_bi
+        last_bos_dir     := -1
+        last_break_choch := smc_choch
 
     // A new OB is formed on the same bar a BOS fires (BG sets ob_* there).
     bool  smc_ob_new    = (bull_bos or bear_bos) and not na(ob_bar)
@@ -949,6 +1007,9 @@ compute_sig_state() =>
     var int   n_loss_near     = 0     // loss, MFE_R >= i_near_tp2 (hairline miss)
     var int   n_loss_aftertp1 = 0     // loss, 1.0 <= MFE_R < i_near_tp2
     var int   n_loss_straight = 0     // loss, MFE_R < 1.0
+    // Sub-slice of n_win_tp2: TP2 wins that retraced to BE after TP1 then
+    // recovered to hit TP2. Display-only; never affects engine behavior.
+    var int   n_win_tp1_be_tp2 = 0
     var int   sum_hold_ms     = 0
 
     // -- Session / weekday R-breakdown buckets. Realized R + trade count
@@ -1290,6 +1351,7 @@ compute_sig_state() =>
     // -- Per-bar event flags (local; not var — reset each bar) --
     evt_open_long      = false
     evt_open_short     = false
+    int evt_open_ob_bar = na
     evt_tp1            = false
     evt_tp2            = false
     evt_tp3            = false
@@ -1334,23 +1396,56 @@ compute_sig_state() =>
     // Display-only; never feeds the entry condition. Bound to the EXACT same
     // ternary chain as add_reason (no parallel re-derivation).
     int add_ready_dir = 0
+    // SAME-DIRECTION-ONLY views. An add can ONLY fire on the active position's
+    // side (active_dir), so the Add row must narrate the same-dir candidate and
+    // ignore opposite-dir setups/forming (they can never become an add). When
+    // in-trade, fold the bull_*/bear_* flags down to the active side. Flat
+    // (active_dir == 0) the Add block doesn't render, so the values are moot.
+    bool sd_setup   = active_dir == 1 ? bull_setup   : active_dir == -1 ? bear_setup   : false
+    bool sd_forming = active_dir == 1 ? bull_forming : active_dir == -1 ? bear_forming : false
+    string want_dir_txt = active_dir == 1 ? "BUY" : "SELL"
+    // ACTUAL blocker for the absent same-dir candidate, reusing the engine's own
+    // flags in priority order: (1) no same-dir OB exists, else (2) OB exists but
+    // the HTF bias gate blocks the side. Anything else falls through to plain.
+    bool   sd_have_ob = active_dir == 1 ? have_ob_bull : active_dir == -1 ? have_ob_bear : false
+    bool   sd_htf_ok  = active_dir == 1 ? h1_ok_bull   : active_dir == -1 ? h1_ok_bear   : false
+    // Wanted-side OB word: the missing OB is named for the side the add wants
+    // (bull when long / bear when short), NOT the break side. Most-recent break
+    // direction word + its CHoCH/BOS class stay keyed off the break for "latest …".
+    string want_ob_txt = active_dir == 1 ? "bull" : active_dir == -1 ? "bear" : "none"
+    string brk_dir_txt = active_bull_bos ? "bull" : active_bear_bos ? "bear" : "none"
+    string brk_kind    = last_break_choch ? "CHoCH" : "break"
+    // Final parenthetical: blame the true cause.
+    string sd_block_txt = not sd_have_ob ? "(" + want_ob_txt + " OB retired — latest " + brk_kind + " " + brk_dir_txt + ")" :
+      not sd_htf_ok ? "(HTF bias blocks " + want_dir_txt + ")" : ""
+    // NOT-NEAR enrichment: when the SAME-DIR setup is FORMING (OB anchored + HTF
+    // ok, just not at the edge yet) we surface its live edge distance in ATR.
+    // Reuses the SAME dist_bull/dist_bear/atr_val the gate uses — no re-derivation.
+    string nn_dir  = active_dir == 1 ? "bull" : active_dir == -1 ? "bear" : ""
+    float  nn_dist = active_dir == 1 and not na(dist_bull) ? dist_bull / atr_val :
+      active_dir == -1 and not na(dist_bear) ? dist_bear / atr_val : na
+    string nn_txt  = "NOT-NEAR (watching" +
+      (nn_dir == "" ? "" : " " + nn_dir) +
+      (na(nn_dist) ? "" : " · " + str.tostring(nn_dist, "0.0") + " ATR") + ")"
     if array.size(active_trades) >= 1 and array.size(active_trades) < i_max_pos
         add_reason := not in_date_range ? "DATE-OUT" :
           not in_session ? "OFF-SESS" :
           (not day_trades_ok or not day_loss_ok) ? "DAY-CAP" :
-          (not bull_setup and not bear_setup and not bull_forming and not bear_forming) ? "NO-SETUP/BOS" :
-          (not bull_setup and not bear_setup) ? "NOT-NEAR (watching)" :
+          (not sd_setup and not sd_forming) ? "no " + want_dir_txt + " setup" + (sd_block_txt == "" ? "" : " " + sd_block_txt) :
+          not sd_setup ? nn_txt :
           ob_already_held ? "SAME-OB" :
-          ((bull_setup and active_dir == -1) or (bear_setup and active_dir == 1)) ? "OPP-DIR" :
           "READY (will fire)"
         // Bind add-ready dir to the SAME outcome string (single source of truth):
-        // only set when add_reason resolved to READY; dir = the firing setup side.
+        // only set when add_reason resolved to READY. READY is now reachable
+        // only via the SAME-DIR setup (sd_setup), so the firing side is active_dir.
         if add_reason == "READY (will fire)"
-            add_ready_dir := bull_setup ? 1 : -1
-    // Latch the last REAL skip (a setup was present but a gate blocked it).
+            add_ready_dir := active_dir
+    // Latch the last REAL skip (a SAME-DIR setup was present but a gate blocked
+    // it). Opposite-dir candidates are NOT skips here — they can never add — so
+    // the latch only fires on sd_setup. Internal only; no panel row reads it.
     var string last_add_skip    = "—"
     var int    last_add_skip_bi = na
-    if array.size(active_trades) >= 1 and array.size(active_trades) < i_max_pos and (bull_setup or bear_setup) and (not in_session or not in_date_range or not day_trades_ok or not day_loss_ok or ob_already_held or (bull_setup and active_dir == -1) or (bear_setup and active_dir == 1))
+    if array.size(active_trades) >= 1 and array.size(active_trades) < i_max_pos and sd_setup and (not in_session or not in_date_range or not day_trades_ok or not day_loss_ok or ob_already_held)
         last_add_skip    := add_reason
         last_add_skip_bi := bar_index
     if i_sim_on and array.size(active_trades) < i_max_pos and cooldown_ok and in_date_range and in_session and day_trades_ok and day_loss_ok and barstate.isconfirmed
@@ -1391,6 +1486,7 @@ compute_sig_state() =>
                     sim_count       += 1
                     day_opens_today += 1
                     evt_open_long   := true
+                    evt_open_ob_bar := ob_bar
         else if bear_setup and not ob_already_held and (active_dir == 0 or active_dir == -1)
             raw_sl  = ob_high + i_sl_buf * atr_val
             raw_dst = raw_sl - close
@@ -1426,6 +1522,7 @@ compute_sig_state() =>
                     sim_count        += 1
                     day_opens_today  += 1
                     evt_open_short   := true
+                    evt_open_ob_bar  := ob_bar
 
     // -- PRE-ENTRY CHECKLIST evaluation (display-only). Snapshots the engine's
     //    OWN gate results for the CANDIDATE direction (active BOS dir) so the
@@ -1588,6 +1685,14 @@ compute_sig_state() =>
                     t.eff_sl   := t.entry
                     t.eff_sl_r := 0.0
                     evt_trail_step := 1
+            // -- BE-dip after TP1 (outcome anatomy, display-only). Once TP1 is
+            //    filled and the trade is still open, flag if this bar's H/L
+            //    retraced all the way back to entry (BE). Same confirmed-bar
+            //    H/L granularity the TP/SL touches use. Latched once; booked
+            //    into n_win_tp1_be_tp2 only if the trade later books a TP2 win.
+            if t.tp1_done and not closed_now and not t.be_dip_after_tp1 and
+               (t.is_long ? low <= t.entry : high >= t.entry)
+                t.be_dip_after_tp1 := true
             // TP2
             if not closed_now and i_use_tp2 and not t.tp2_done and (t.is_long ? high >= t.tp2 : low <= t.tp2)
                 t.tp2_done := true
@@ -1616,6 +1721,9 @@ compute_sig_state() =>
                     sum_mae_r += t.mae_r
                     // Outcome anatomy: TP-final → WIN bucket; accrue hold time.
                     n_win_tp2  += 1
+                    // TP2 win that dipped to BE after TP1 first (sub-slice).
+                    if t.be_dip_after_tp1
+                        n_win_tp1_be_tp2 += 1
                     was_win    := true
                     sum_hold_ms += time - t.open_time
                     if opened_today
@@ -1703,7 +1811,7 @@ compute_sig_state() =>
                 // Only an untrailed SL hit (original level, eff_sl_r = -1)
                 // counts as a true loss.
                 sl_was_trailed = t.eff_sl_r >= 0
-                was_win = sl_was_trailed
+                was_win := sl_was_trailed
                 if sl_was_trailed
                     sim_wins += 1
                 else
@@ -1876,6 +1984,18 @@ compute_sig_state() =>
     bool   d_tp3_done  = not na(disp) and disp.tp3_done
     string d_bias_open = not na(disp) ? disp.bias_at_open : ""
 
+    // -- Per-slot live entries for the LIVE TRADE band (display-only).
+    //    active_trades is ordered oldest-first (index 0 = open order #1).
+    //    Surface up to 3 slots' (entry, open_time) so the chart side can
+    //    render one "Entry #N · hold" row per concurrent trade. na in slots
+    //    beyond active_n. Engine untouched — read-only fetches. --
+    float slot1_entry  = active_n > 0 ? array.get(active_trades, 0).entry     : na
+    float slot2_entry  = active_n > 1 ? array.get(active_trades, 1).entry     : na
+    float slot3_entry  = active_n > 2 ? array.get(active_trades, 2).entry     : na
+    int   slot1_opentm = active_n > 0 ? array.get(active_trades, 0).open_time : na
+    int   slot2_opentm = active_n > 1 ? array.get(active_trades, 1).open_time : na
+    int   slot3_opentm = active_n > 2 ? array.get(active_trades, 2).open_time : na
+
     // -- SESSION BIAS: sum each session's 10-day queue into plain [3] arrays
     //    for render. Queue size IS the distinct-weekday count (0..10). --
     array<int> sb10_bull  = array.new<int>(3, 0)
@@ -1893,6 +2013,32 @@ compute_sig_state() =>
         array.set(sb10_bear,  2, int(array.sum(qn_bear)))
         array.set(sb10_range, 2, int(array.sum(qn_range)))
 
+    // -- Suppress WATCH visuals the engine could never act on while in-trade.
+    //    Two impossible-add cases are nulled (display-only; engine untouched):
+    //      (a) SAME-OB SAME-DIR: in-trade on the candidate OB — the add gate
+    //          rejects it as SAME-OB (ob_already_held). watch_dir == active_dir.
+    //      (b) IN-TRADE OPP-DIR: a position is open and the watch points the
+    //          OTHER way (watch_dir != active_dir). The engine can't fire an
+    //          opposite-direction add (add gate's OPP-DIR skip:
+    //          (bull_setup and active_dir==-1) or (bear_setup and active_dir==1)),
+    //          so a WATCH SELL line under a live BUY (or vice-versa) advertises
+    //          an impossible trade. Reuses the engine's OWN ob_already_held /
+    //          active_dir (no OB re-identification). Net rule while in-trade:
+    //          watch visuals survive ONLY for a same-dir candidate on a NEW OB
+    //          (ob_already_held false, watch_dir == active_dir). Flat (active_dir
+    //          == 0) → both clauses false → unchanged. Nulls all five watch_* so
+    //          the dashed line, every WATCH label, AND the GET-READY watch_*
+    //          fallback go dark. The add gate's "READY (will fire)" excludes both
+    //          SAME-OB and OPP-DIR, so add_ready_dir / the GET-READY add case are
+    //          untouched. 2-space continuation. --
+    suppress_same_ob  = ob_already_held and watch_dir != 0 and watch_dir == active_dir
+    suppress_oppdir   = active_dir != 0 and watch_dir != 0 and watch_dir != active_dir
+    if suppress_same_ob or suppress_oppdir
+        watch_entry_px := na
+        watch_dir      := 0
+        watch_sl_px    := na
+        watch_tp1_px   := na
+        watch_tp2_px   := na
     // -- Build return UDT --
     SigState s = SigState.new()
     s.bull_setup       := bull_setup
@@ -1922,6 +2068,12 @@ compute_sig_state() =>
     s.sim_tp2_done     := d_tp2_done
     s.sim_tp3_done     := d_tp3_done
     s.active_count     := active_n
+    s.slot1_entry      := slot1_entry
+    s.slot2_entry      := slot2_entry
+    s.slot3_entry      := slot3_entry
+    s.slot1_opentm     := slot1_opentm
+    s.slot2_opentm     := slot2_opentm
+    s.slot3_opentm     := slot3_opentm
     s.sim_count        := sim_count
     s.sim_wins         := sim_wins
     s.sim_losses       := sim_losses
@@ -1941,6 +2093,7 @@ compute_sig_state() =>
     s.n_loss_near      := n_loss_near
     s.n_loss_aftertp1  := n_loss_aftertp1
     s.n_loss_straight  := n_loss_straight
+    s.n_win_tp1_be_tp2 := n_win_tp1_be_tp2
     s.sum_hold_ms      := sum_hold_ms
     s.day_r_today      := day_r_today
     s.day_usd_today    := day_usd_today
@@ -1961,26 +2114,31 @@ compute_sig_state() =>
     s.add_reason_s     := add_reason
     s.add_ready_dir    := add_ready_dir
     s.last_add_skip_s  := last_add_skip
-    s.cand_dir          := cand_dir
-    s.chk_killzone      := in_session
-    s.chk_htf_ok        := chk_htf_ok
-    s.chk_bos_active    := chk_bos_active
-    s.chk_bos_age       := chk_bos_age
-    s.chk_ob            := chk_ob
-    s.chk_ob_edge       := chk_ob_edge
-    s.chk_price_at_ob   := chk_price_at_ob
-    s.chk_dist_atr      := chk_dist_atr
-    s.chk_cooldown      := chk_cooldown
-    s.chk_cool_left     := chk_cool_left
-    s.chk_minsl_ok      := chk_minsl_ok
-    s.chk_minsl_dist    := chk_minsl_dist
-    s.chk_slot_free     := chk_slot_free
-    s.chk_fresh_ob      := chk_fresh_ob
-    s.chk_day_trades_ok := chk_day_trades_ok
-    s.chk_day_loss_ok   := chk_day_loss_ok
-    s.chk_day_opens     := day_opens_today
+    // PRE-ENTRY CHECKLIST packed into one array<float> (index constants CHK_*).
+    // Bools → 1.0/0.0; na-able numerics keep na. Semantics unchanged.
+    array<float> chk_pack = array.new<float>(18, na)
+    array.set(chk_pack, CHK_CAND_DIR,      cand_dir)
+    array.set(chk_pack, CHK_KILLZONE,      in_session        ? 1.0 : 0.0)
+    array.set(chk_pack, CHK_HTF_OK,        chk_htf_ok        ? 1.0 : 0.0)
+    array.set(chk_pack, CHK_BOS_ACTIVE,    chk_bos_active    ? 1.0 : 0.0)
+    array.set(chk_pack, CHK_BOS_AGE,       chk_bos_age)
+    array.set(chk_pack, CHK_OB,            chk_ob            ? 1.0 : 0.0)
+    array.set(chk_pack, CHK_OB_EDGE,       chk_ob_edge)
+    array.set(chk_pack, CHK_PRICE_AT_OB,   chk_price_at_ob   ? 1.0 : 0.0)
+    array.set(chk_pack, CHK_DIST_ATR,      chk_dist_atr)
+    array.set(chk_pack, CHK_COOLDOWN,      chk_cooldown      ? 1.0 : 0.0)
+    array.set(chk_pack, CHK_COOL_LEFT,     chk_cool_left)
+    array.set(chk_pack, CHK_MINSL_OK,      chk_minsl_ok      ? 1.0 : 0.0)
+    array.set(chk_pack, CHK_MINSL_DIST,    chk_minsl_dist)
+    array.set(chk_pack, CHK_SLOT_FREE,     chk_slot_free     ? 1.0 : 0.0)
+    array.set(chk_pack, CHK_FRESH_OB,      chk_fresh_ob      ? 1.0 : 0.0)
+    array.set(chk_pack, CHK_DAY_TRADES_OK, chk_day_trades_ok ? 1.0 : 0.0)
+    array.set(chk_pack, CHK_DAY_LOSS_OK,   chk_day_loss_ok   ? 1.0 : 0.0)
+    array.set(chk_pack, CHK_DAY_OPENS,     day_opens_today)
+    s.chk_pack          := chk_pack
     s.evt_open_long       := evt_open_long
     s.evt_open_short      := evt_open_short
+    s.evt_open_ob_bar     := evt_open_ob_bar
     s.evt_tp1             := evt_tp1
     s.evt_tp2             := evt_tp2
     s.evt_tp3             := evt_tp3
@@ -2066,6 +2224,12 @@ sim_tp1_done     = st.sim_tp1_done
 sim_tp2_done     = st.sim_tp2_done
 sim_tp3_done     = st.sim_tp3_done
 active_count     = st.active_count
+slot1_entry      = st.slot1_entry
+slot2_entry      = st.slot2_entry
+slot3_entry      = st.slot3_entry
+slot1_opentm     = st.slot1_opentm
+slot2_opentm     = st.slot2_opentm
+slot3_opentm     = st.slot3_opentm
 sim_count        = st.sim_count
 sim_wins         = st.sim_wins
 sim_losses       = st.sim_losses
@@ -2085,6 +2249,7 @@ n_win_tp2        = st.n_win_tp2
 n_loss_near      = st.n_loss_near
 n_loss_aftertp1  = st.n_loss_aftertp1
 n_loss_straight  = st.n_loss_straight
+n_win_tp1_be_tp2 = st.n_win_tp1_be_tp2
 sum_hold_ms      = st.sum_hold_ms
 day_r_now        = st.day_r_today
 day_usd_now      = st.day_usd_today
@@ -2106,30 +2271,34 @@ cooldown_ok      = st.cooldown_ok
 add_reason_s     = st.add_reason_s
 add_ready_dir    = st.add_ready_dir
 last_add_skip_s  = st.last_add_skip_s
-chk_cand_dir     = st.cand_dir
-chk_killzone     = st.chk_killzone
-chk_htf_ok       = st.chk_htf_ok
-chk_bos_active   = st.chk_bos_active
-chk_bos_age      = st.chk_bos_age
-chk_ob           = st.chk_ob
-chk_ob_edge      = st.chk_ob_edge
-chk_price_at_ob  = st.chk_price_at_ob
-chk_dist_atr     = st.chk_dist_atr
-chk_cooldown     = st.chk_cooldown
-chk_cool_left    = st.chk_cool_left
-chk_minsl_ok     = st.chk_minsl_ok
-chk_minsl_dist   = st.chk_minsl_dist
-chk_slot_free    = st.chk_slot_free
-chk_fresh_ob     = st.chk_fresh_ob
-chk_day_trades_ok = st.chk_day_trades_ok
-chk_day_loss_ok  = st.chk_day_loss_ok
-chk_day_opens    = st.chk_day_opens
+// PRE-ENTRY CHECKLIST: unpack the packed array<float> back into the SAME plain
+// chart-scope names/types the table renderer consumes. Bools = (x == 1.0);
+// na-able numerics keep na. Index constants CHK_* defined after the SigState UDT.
+chk_cand_dir     = int(array.get(st.chk_pack, CHK_CAND_DIR))
+chk_killzone     = array.get(st.chk_pack, CHK_KILLZONE)      == 1.0
+chk_htf_ok       = array.get(st.chk_pack, CHK_HTF_OK)        == 1.0
+chk_bos_active   = array.get(st.chk_pack, CHK_BOS_ACTIVE)    == 1.0
+chk_bos_age      = int(array.get(st.chk_pack, CHK_BOS_AGE))
+chk_ob           = array.get(st.chk_pack, CHK_OB)            == 1.0
+chk_ob_edge      = array.get(st.chk_pack, CHK_OB_EDGE)
+chk_price_at_ob  = array.get(st.chk_pack, CHK_PRICE_AT_OB)   == 1.0
+chk_dist_atr     = array.get(st.chk_pack, CHK_DIST_ATR)
+chk_cooldown     = array.get(st.chk_pack, CHK_COOLDOWN)      == 1.0
+chk_cool_left    = int(array.get(st.chk_pack, CHK_COOL_LEFT))
+chk_minsl_ok     = array.get(st.chk_pack, CHK_MINSL_OK)      == 1.0
+chk_minsl_dist   = array.get(st.chk_pack, CHK_MINSL_DIST)
+chk_slot_free    = array.get(st.chk_pack, CHK_SLOT_FREE)     == 1.0
+chk_fresh_ob     = array.get(st.chk_pack, CHK_FRESH_OB)      == 1.0
+chk_day_trades_ok = array.get(st.chk_pack, CHK_DAY_TRADES_OK) == 1.0
+chk_day_loss_ok  = array.get(st.chk_pack, CHK_DAY_LOSS_OK)   == 1.0
+chk_day_opens    = int(array.get(st.chk_pack, CHK_DAY_OPENS))
 
 // Event flags drive all chart-side transitions. With multi-position, bar
 // transitions on sim_long/sim_short would miss back-to-back same-direction
 // opens, so we rely on these flags from the sig-TF function instead.
 just_opened_long   = st.evt_open_long
 just_opened_short  = st.evt_open_short
+just_opened_ob_bar = st.evt_open_ob_bar
 just_hit_tp1       = st.evt_tp1
 just_hit_tp2       = st.evt_tp2
 just_hit_tp3       = st.evt_tp3
@@ -2157,8 +2326,6 @@ gates_green      = active_count == 0 and in_date_range and in_session and cooldo
 state_setup_buy  = gates_green and bull_setup
 state_setup_sell = gates_green and bear_setup
 state_is_setup   = state_setup_buy or state_setup_sell
-var bool prev_setup = false
-setup_entered    = state_is_setup and not prev_setup
 
 // ADD-READY surface — the in-trade analogue of the flat SETUP state. Bound to
 // add_ready_dir, which the engine sets ONLY when the panel's "Add #N" row reads
@@ -2168,8 +2335,50 @@ setup_entered    = state_is_setup and not prev_setup
 add_ready_buy    = add_ready_dir == 1
 add_ready_sell   = add_ready_dir == -1
 add_is_ready     = add_ready_dir != 0
-var bool prev_add_ready = false
-add_ready_entered = add_is_ready and not prev_add_ready
+
+// =====================================================================
+// GET READY display hysteresis (DISPLAY-ONLY — engine untouched).
+// The firing engine still uses the sacred 0.4-ATR proximity rule; nothing
+// below is read by compute_sig_state(). Problem solved here: as price
+// oscillates around the 0.4-ATR entry boundary, state_is_setup / add_is_ready
+// flicker WATCH↔SETUP every bar, the label blinks, and the imminent alert
+// re-fires on each re-entry. This adds a Schmitt-trigger so the label SHOWS at
+// 0.4 ATR but only HIDES past i_ready_release ATR.
+//
+// States (chart-side, plain var — no engine reads):
+//   SHOW  : ready_show — the real engine condition (price within 0.4 ATR).
+//   HOLD  : was visible, ready_show now false, BUT distance ≤ i_ready_release
+//           AND the setup is otherwise alive (every gate except proximity still
+//           green: candidate-dir BOS active, OB anchored, HTF ok, killzone open,
+//           in date range, gates_green). Rendered dimmed with "(near)".
+//   HIDE  : distance > i_ready_release, OR the setup hard-dies (BOS gone, OB
+//           aged/replaced so chk_ob false, killzone closed, slot taken so
+//           active_count breaks gates_green / add_is_ready, trade fired), OR no
+//           candidate direction. Clears the label + RR boxes.
+//
+// The distance reused is chk_dist_atr (candidate-direction OB-edge distance in
+// ATR, already computed in the engine's pre-entry checklist — see compute_sig
+// state). Not re-derived here.
+// =====================================================================
+// "Setup otherwise alive" — the same gate set the engine would need to fire,
+// MINUS proximity. When this holds and ready_show is false, the ONLY missing
+// leg is price being inside 0.4 ATR.
+ready_setup_alive = chk_cand_dir != 0 and chk_bos_active and chk_ob and chk_htf_ok and
+  chk_killzone and in_date_range and gates_green
+// Within the release band? chk_dist_atr is na when no OB anchored → treat as
+// out-of-band (forces HIDE). i_ready_release is clamped ≥ 0.4 = the show edge.
+ready_in_release = not na(chk_dist_atr) and chk_dist_atr <= i_ready_release
+ready_show       = state_is_setup or add_is_ready
+var bool ready_was_visible = false
+// HOLD only when we were already visible last bar, the engine condition just
+// dropped, we're still inside the release band, and the setup is otherwise
+// alive (proximity is the lone failed gate).
+ready_hold       = ready_was_visible and not ready_show and ready_in_release and ready_setup_alive
+ready_visible    = ready_show or ready_hold
+// Alert arming: SHOW is entered from a non-visible state (full HIDE) only —
+// NOT from HOLD. So one imminent-approach alert per genuine approach, re-armed
+// only after the label fully disappears.
+ready_show_entered = ready_show and not ready_was_visible
 
 // =====================================================================
 // ALERTS (alert() — multiplexed through ONE TradingView alert slot)
@@ -2199,24 +2408,26 @@ if i_alerts_on
         w_msg = "BG 15m WATCH " + w_dir + " " + syminfo.ticker + " " + timeframe.period +
           " — waiting @ " + str.tostring(watch_entry_px, format.mintick)
         alert(w_msg, alert.freq_once_per_bar_close)
-    // -- Setup: fire ONCE on transition into SETUP state (price at OB, all
-    //    gates green, signal imminent). Binds to the same state_is_setup
-    //    the GET READY label uses; setup_entered is the rising edge. --
-    if i_alert_setup and setup_entered
-        s_dir = state_setup_buy ? "BUY" : "SELL"
-        s_msg = "BG SMC: SETUP " + s_dir + " — price at OB, signal imminent " +
-          syminfo.ticker + " " + timeframe.period +
-          (na(watch_entry_px) ? "" : " | entry " + str.tostring(watch_entry_px, format.mintick))
+    // -- Setup / Add imminent: fire ONCE on transition into the SHOW state of
+    //    the GET READY label (price reached 0.4-ATR proximity, gates green).
+    //    ready_show_entered is the hysteresis rising edge — it fires only when
+    //    SHOW is entered from a full HIDE, NOT when the label was merely HOLDing
+    //    (dimmed/near). So price chopping across the 0.4-ATR boundary no longer
+    //    re-arms the alert; one alert per genuine approach. SETUP and ADD share
+    //    the i_alert_setup slot (mutually exclusive: SETUP needs active_count==0,
+    //    ADD needs a live position). Message variant picks the right wording. --
+    if i_alert_setup and ready_show_entered
+        s_is_add = not state_is_setup and add_is_ready
+        s_dir    = (s_is_add ? add_ready_buy : state_setup_buy) ? "BUY" : "SELL"
+        s_ent    = not na(setup_entry_px) ? setup_entry_px : watch_entry_px
+        s_msg    = s_is_add ?
+          ("BG SMC: ADD " + s_dir + " imminent — price at OB, slot free " +
+           syminfo.ticker + " " + timeframe.period +
+           (na(s_ent) ? "" : " | entry ~" + str.tostring(s_ent, format.mintick))) :
+          ("BG SMC: SETUP " + s_dir + " — price at OB, signal imminent " +
+           syminfo.ticker + " " + timeframe.period +
+           (na(s_ent) ? "" : " | entry " + str.tostring(s_ent, format.mintick)))
         alert(s_msg, alert.freq_once_per_bar_close)
-    // -- Add-ready: same i_alert_setup slot, separate rising edge. Fires once on
-    //    transition into the in-trade ADD-ready state (slot free, same-dir setup
-    //    at OB, gates green). Message variant flags it as an ADD. --
-    if i_alert_setup and add_ready_entered
-        as_dir = add_ready_buy ? "BUY" : "SELL"
-        as_msg = "BG SMC: ADD " + as_dir + " imminent — price at OB, slot free " +
-          syminfo.ticker + " " + timeframe.period +
-          (na(setup_entry_px) ? "" : " | entry ~" + str.tostring(setup_entry_px, format.mintick))
-        alert(as_msg, alert.freq_once_per_bar_close)
     // -- Exit: any open trade hit a take-profit or stop this bar --
     if i_alert_exit and (closed_by_tp_long or closed_by_sl_long or closed_by_tp_short or closed_by_sl_short)
         x_dir   = (closed_by_tp_long or closed_by_sl_long) ? "LONG" : "SHORT"
@@ -2229,10 +2440,12 @@ if i_alerts_on
 // Track watch level/dir for next-bar new-watch detection (every bar).
 prev_watch := watch_entry_px
 prev_dir   := watch_dir
-// Track SETUP state for next-bar transition detection (rising edge → alert).
-prev_setup := state_is_setup
-// Track ADD-READY state for its own rising-edge alert transition.
-prev_add_ready := add_is_ready
+// Track GET READY label visibility (SHOW or HOLD) for next-bar hysteresis: the
+// HOLD branch needs "was visible last bar", and ready_show_entered needs "was
+// NOT visible last bar" to gate the imminent alert to one fire per approach.
+// Updated EVERY bar (not just barstate.islast) so the latch is correct on the
+// last bar even though the label itself only renders there.
+ready_was_visible := ready_visible
 
 // SMC visual fields (BG-driven; consumed by the SMC drawing section below).
 smc_bos_bull  = st.smc_bos_bull
@@ -2626,16 +2839,33 @@ if barstate.islast
 // entry / SL / TP2 reuse the watch_* levels; na parts degrade gracefully.
 // =====================================================================
 var label setup_note_lbl = na
+// Position-tool RR boxes that accompany the GET READY label: a GREEN reward
+// box (entry→TP2) and a RED risk box (entry→SL), spanning the current bar to
+// ~8 bars right. Same lifecycle as the label — created/updated in the SETUP/
+// ADD branch, deleted in the else. Display-only; each na-guarded so a missing
+// projection simply skips that box.
+var box setup_rr_tp_box = na
+var box setup_rr_sl_box = na
 if barstate.islast
-    if i_show_setup_note and (state_is_setup or add_is_ready)
+    if i_show_setup_note and ready_visible
+        // SHOW vs HOLD: ready_show = the live engine condition (price inside
+        // 0.4 ATR). When false but ready_visible is true we are in HOLD — price
+        // drifted out but within the release band and the setup is otherwise
+        // alive. HOLD dims the bg and appends "(near)" to the headline.
+        sn_hold   = not ready_show
         // Two trigger sources share this label: the flat SETUP state and the
         // in-trade ADD-ready state. SETUP wins precedence if both somehow hold
         // (they are mutually exclusive in practice — SETUP needs active_count==0).
-        sn_is_add = not state_is_setup and add_is_ready
-        sn_buy    = sn_is_add ? add_ready_buy : state_setup_buy
-        sn_head   = sn_is_add ?
+        // In HOLD both flags are false, so fall back to the still-alive candidate
+        // direction (chk_cand_dir): +1 BUY, -1 SELL. ADD vs flat is preserved
+        // from active_count (a live position ⇒ this would be an ADD).
+        sn_is_add = sn_hold ? active_count > 0 : (not state_is_setup and add_is_ready)
+        sn_buy    = sn_hold ? (chk_cand_dir == 1) :
+          (sn_is_add ? add_ready_buy : state_setup_buy)
+        sn_core   = sn_is_add ?
           (sn_buy ? "⚡ GET READY — ADD BUY" : "⚡ GET READY — ADD SELL") :
           (sn_buy ? "⚡ GET READY — BUY" : "⚡ GET READY — SELL")
+        sn_head   = sn_hold ? sn_core + " (near)" : sn_core
         // Projected entry/SL/TP2: prefer setup_* (the engine's own entry math,
         // populated whenever price is in proximity = exactly the SETUP state).
         // Fall back to watch_* so the line still renders if setup_* were ever
@@ -2657,22 +2887,72 @@ if barstate.islast
         // Anchor at the right edge beside current price; arrow points at it.
         sn_x     = bar_index + 2
         sn_y     = na(sn_entry_px) ? close : sn_entry_px
-        sn_bg    = sn_buy ? i_col_buy : i_col_sell
+        // HOLD dims the label bg (more transparent) so the "(near)" state reads
+        // as provisional vs the solid SHOW. color.new with a fixed 55-transp on
+        // the accent; SHOW keeps the input color as-is.
+        sn_bg    = sn_hold ? color.new(sn_buy ? i_col_buy : i_col_sell, 55) :
+          (sn_buy ? i_col_buy : i_col_sell)
+        sn_txtc  = sn_hold ? color.new(color.white, 25) : color.white
         sn_style = sn_buy ? label.style_label_lower_left : label.style_label_upper_left
         if na(setup_note_lbl)
             setup_note_lbl := label.new(sn_x, sn_y, sn_txt, xloc = xloc.bar_index,
                                         style = sn_style, color = sn_bg,
-                                        textcolor = color.white, size = size.large)
+                                        textcolor = sn_txtc, size = size.large)
         else
             label.set_xy(setup_note_lbl, sn_x, sn_y)
             label.set_text(setup_note_lbl, sn_txt)
             label.set_color(setup_note_lbl, sn_bg)
+            label.set_textcolor(setup_note_lbl, sn_txtc)
             label.set_style(setup_note_lbl, sn_style)
+        // -- RR position-tool boxes. Span current bar → +8 bars. GREEN reward
+        //    (entry→TP2), RED risk (entry→SL). Drawn only when BOTH the entry
+        //    projection and the respective target are non-na; otherwise that
+        //    box is cleared so no stale geometry lingers. --
+        rr_left  = bar_index
+        rr_right = bar_index + 8
+        // HOLD dims the RR fills to match the provisional label (88 vs 75).
+        rr_tp_c  = color.new(color.green, sn_hold ? 88 : 75)
+        rr_sl_c  = color.new(color.red,   sn_hold ? 88 : 75)
+        // Reward box: entry → TP2.
+        if not na(sn_entry_px) and not na(sn_tp2_px)
+            if na(setup_rr_tp_box)
+                setup_rr_tp_box := box.new(rr_left, sn_tp2_px, rr_right, sn_entry_px,
+                                           xloc      = xloc.bar_index,
+                                           border_width = 0,
+                                           bgcolor   = rr_tp_c)
+            else
+                box.set_lefttop(setup_rr_tp_box, rr_left, sn_tp2_px)
+                box.set_rightbottom(setup_rr_tp_box, rr_right, sn_entry_px)
+                box.set_bgcolor(setup_rr_tp_box, rr_tp_c)
+        else if not na(setup_rr_tp_box)
+            box.delete(setup_rr_tp_box)
+            setup_rr_tp_box := na
+        // Risk box: entry → SL.
+        if not na(sn_entry_px) and not na(sn_sl_px)
+            if na(setup_rr_sl_box)
+                setup_rr_sl_box := box.new(rr_left, sn_entry_px, rr_right, sn_sl_px,
+                                           xloc      = xloc.bar_index,
+                                           border_width = 0,
+                                           bgcolor   = rr_sl_c)
+            else
+                box.set_lefttop(setup_rr_sl_box, rr_left, sn_entry_px)
+                box.set_rightbottom(setup_rr_sl_box, rr_right, sn_sl_px)
+                box.set_bgcolor(setup_rr_sl_box, rr_sl_c)
+        else if not na(setup_rr_sl_box)
+            box.delete(setup_rr_sl_box)
+            setup_rr_sl_box := na
     else
-        // State left SETUP (or toggle off): delete so no stale note lingers.
+        // HIDE: hysteresis released (distance > release, setup hard-died, or
+        // toggle off). Delete label + RR boxes so no stale geometry lingers.
         if not na(setup_note_lbl)
             label.delete(setup_note_lbl)
             setup_note_lbl := na
+        if not na(setup_rr_tp_box)
+            box.delete(setup_rr_tp_box)
+            setup_rr_tp_box := na
+        if not na(setup_rr_sl_box)
+            box.delete(setup_rr_sl_box)
+            setup_rr_sl_box := na
 
 // =====================================================================
 // KILLZONE RENDERING — runs each chart bar, updates each enabled
@@ -2798,6 +3078,28 @@ if i_smc_on and i_smc_obbox and array.size(smc_boxes) > 0
             array.remove(smc_box_is_demand, bi)    // keep all three index-
             array.remove(smc_box_origin, bi)       // aligned on every removal
 
+// --- (C) USED-OB recolor: an OB that produced a trade turns BLUE for life ---
+// When the engine opens a sim trade, it surfaces that trade's OB origin bar
+// (evt_open_ob_bar). Here we find the matching surviving box by its origin bar
+// (smc_box_origin, lockstep with smc_boxes) and recolor it blue — fill + border
+// switch from teal/red to color.blue at the SAME transparency the box already
+// carried. One-shot on the open event; the box then stays blue for the rest of
+// its life (mitigation / FIFO eviction unchanged). Marks "used" OBs at a glance
+// and is the visual for the SAME-OB rule (the engine won't re-enter from a box
+// once it has traded). Display-only — no detection logic, no per-bar respawn.
+// Both directions: a bull OB used by a BUY and a bear OB used by a SELL both
+// turn blue. Primary match is by origin bar; if no box carries that origin (it
+// was already FIFO-evicted or never drawn under the noise filters) nothing is
+// recolored, which is correct.
+if i_smc_on and i_smc_obbox and (just_opened_long or just_opened_short) and not na(just_opened_ob_bar) and array.size(smc_boxes) > 0
+    for bi = 0 to array.size(smc_boxes) - 1
+        if array.get(smc_box_origin, bi) == just_opened_ob_bar
+            b = array.get(smc_boxes, bi)
+            // Reuse the box's existing fill transparency so only the hue changes.
+            box.set_bgcolor(b,     color.new(color.blue, i_smc_ob_trans))
+            box.set_border_color(b, color.new(color.blue, i_smc_ob_trans))
+            break
+
 // =====================================================================
 // STATUS TABLE
 // =====================================================================
@@ -2826,21 +3128,25 @@ pos_lookup(string s) =>
 //           STREAKS / the bias sub-bands below it.
 //           LIVE TRADE — FLAT (active_count==0): hdr + Bias + 10 fixed checklist
 //             rows + up to 2 g_risk rows (day-cap / day-loss)        = 1+1+12 = 14
-//           LIVE TRADE — IN-TRADE: hdr + Bias + Bias(now) + Dir/Entry/SL/TP1/
-//             final (5) + (multi-pos) Add/Last skip (2)              = 1+1+1+5+2 = 10
+//           LIVE TRADE — IN-TRADE: hdr + Bias + Bias(now) + Dir + Entry#1..3
+//             (up to 3, one per active slot) + SL/TP1/final (3) +
+//             (multi-pos) Add/Last skip (2)            = 1+1+1+1+3+3+2 = 12
 //           TODAY  hdr+3 = 4 · STREAKS hdr+3 = 4
 //           + (i_show_sess) SESSION BIAS hdr+3 = 4 +
 //             ENTRY BIAS SPLIT hdr + up to 3 rows/session = 1+9      = 10
-//           → flat worst case: 5 + 14 + 4 + 4 + 4 + 10 = 41 rows (ends row 40).
-//   RIGHT : PERFORMANCE hdr+14 (0..14) + SESSIONS hdr+entries(3)+
-//           paths(8)+holds(2)+same(1)+overnight(1) (15..30) +
-//           DoW(5) (31..35)                                       = 36 rows
-//   table height = max(41, 36) = 41 → dims 42 for headroom. The whole LEFT
+//           → flat worst case (14 > in-trade 12): 5 + 14 + 4 + 4 + 4 + 10 = 41.
+//           → in-trade worst case: 5 + 12 + 4 + 4 + 4 + 10 = 39. Flat still
+//             dominates the LEFT pair at 41 rows (ends row 40).
+//   RIGHT : PERFORMANCE hdr+15 (0..15; +1 = Win TP1→BE→TP2 sub-slice) +
+//           SESSIONS hdr+entries(3)+paths(8)+holds(2)+same(1)+overnight(1)
+//           (16..31) + DoW(5) (32..36)                            = 37 rows
+//   table height = max(41, 37) = 41 → dims 44 for headroom (LIVE TRADE band
+//   grew by up to 2 rows when Entry split into per-slot Entry#1..3). The LEFT
 //   pair below SETUP advances by the LEFT running counter rL; SESSIONS/DoW on
 //   the RIGHT by rR. Independent counters ⇒ no toggle combo (flat/in-trade ×
 //   i_max_pos × g_risk rows × i_show_sess × i_show_dow) collides.
-//   table.clear wipes the full 5×42 span each render.
-var table tbl = table.new(pos_lookup(i_tbl_pos), 5, 42,
+//   table.clear wipes the full 5×44 span each render.
+var table tbl = table.new(pos_lookup(i_tbl_pos), 5, 44,
                           bgcolor      = color.new(color.black, 20),
                           border_color = color.new(color.gray, 50),
                           border_width = 1,
@@ -2990,7 +3296,7 @@ if i_show_tbl and barstate.islast
     //   col 2 = transparent spacer (never written).
     // Left fixed rows use absolute indices (SETUP 0 … TODAY 18); STREAKS on
     // the left uses running counter rL. Right uses absolute indices for
-    // PERFORMANCE (0..14); SESSIONS/DoW use running counter rR. Conditional
+    // PERFORMANCE (0..15); SESSIONS/DoW use running counter rR. Conditional
     // groups (live-trade rows, multi-pos diagnostics) leave their rows blank
     // when idle (table.clear wipes stale text each render). Headers are
     // tinted bands spanning only their own pair.
@@ -3001,6 +3307,16 @@ if i_show_tbl and barstate.islast
 
     f_cell(1, 0, "State",     color.white)
     f_cell(1, 1, state_str,   state_clr)
+
+    // -- FAILSAFE: effective entry-proximity can't fire. minval=0.1 clamps the
+    //    input on apply, but a legacy saved-state or hand-edited value <= 0
+    //    would silently make near_bull/near_bear impossible (price can never be
+    //    within 0 ATR of the OB) — wiping every sim trade. Loud red override on
+    //    the State row's two cells; renders ONLY when tripped, so zero cost
+    //    in the normal case. Spans the SETUP band's top data row. --
+    if i_entry_atr <= 0
+        table.cell(tbl, 0, 1, "⚠", text_color=color.white, text_size=size.small, text_halign=text.align_center, bgcolor=color.new(color.red, 0))
+        table.cell(tbl, 1, 1, "ENTRY PROXIMITY 0 — NO TRADES CAN FIRE", text_color=color.white, text_size=size.small, text_halign=text.align_left, bgcolor=color.new(color.red, 0))
 
     symbol_line = syminfo.ticker + " " + timeframe.period + " · " + session_now
     f_cell(2, 0, "Symbol",    color.white)
@@ -3050,9 +3366,19 @@ if i_show_tbl and barstate.islast
         f_cell(rL, 0, "Dir (latest)", color.white)
         f_cell(rL, 1, sim_long ? "BUY" : "SELL", sim_long ? color.lime : color.red)
         rL += 1
-        f_cell(rL, 0, "Entry",   color.white)
-        f_cell(rL, 1, str.tostring(sim_entry, format.mintick), color.white)
-        rL += 1
+        // One "Entry #N" row per active slot (#1 = oldest open order). Value =
+        // "<entry> · <live hold>", hold = now (last-bar time) − open_time via
+        // f_dur. Up to 3 rows; each guarded so na slots / na times don't render.
+        // Emitted on the running rL so 1-3 rows fit without collisions.
+        for si = 0 to 2
+            float se = si == 0 ? slot1_entry : si == 1 ? slot2_entry : slot3_entry
+            int   so = si == 0 ? slot1_opentm : si == 1 ? slot2_opentm : slot3_opentm
+            if not na(se)
+                hold_txt = (not na(so) and not na(time) and time >= so) ?
+                  " · " + f_dur(time - so) : ""
+                f_cell(rL, 0, "Entry #" + str.tostring(si + 1), color.white)
+                f_cell(rL, 1, str.tostring(se, format.mintick) + hold_txt, color.white)
+                rL += 1
         f_cell(rL, 0, "SL" + sl_tag, color.white)
         f_cell(rL, 1, str.tostring(sim_eff_sl, format.mintick),
                        sim_eff_sl_r >= 0 ? i_col_be : color.red)
@@ -3176,7 +3502,7 @@ if i_show_tbl and barstate.islast
                   day_usd_disp >= 0 ? i_col_buy : i_col_sell)
     rL += 1
 
-    // -- PERFORMANCE (sim totals) — RIGHT pair (cols 3-4), rows 0..14 -----
+    // -- PERFORMANCE (sim totals) — RIGHT pair (cols 3-4), rows 0..15 -----
     f_hdr(0, "PERFORMANCE", 3)
 
     // Trades — merged count + win-rate into one row (mirrors the "Day" row
@@ -3244,41 +3570,60 @@ if i_show_tbl and barstate.islast
     //    SL win is counted in the WIN bucket (parity with the Trades W/L row).
     pct_den   = closed_count > 0 ? closed_count : 1   // avoid /0; gated by guard
     has_close = closed_count > 0
-    win_pct      = n_win_tp2       * 100.0 / pct_den
-    near_pct     = n_loss_near     * 100.0 / pct_den
-    aftertp1_pct = n_loss_aftertp1 * 100.0 / pct_den
-    straight_pct = n_loss_straight * 100.0 / pct_den
+    win_pct      = n_win_tp2         * 100.0 / pct_den
+    near_pct     = n_loss_near       * 100.0 / pct_den
+    aftertp1_pct = n_loss_aftertp1   * 100.0 / pct_den
+    straight_pct = n_loss_straight   * 100.0 / pct_den
 
     f_cell(10, 0, "Win — hit TP2", color.white, 3)
-    f_cell(10, 1, has_close ? str.tostring(win_pct, "0.0") + "%" : "—",
+    f_cell(10, 1, has_close ? str.tostring(win_pct, "0.0") + "% · " +
+                    str.tostring(n_win_tp2) + "/" + str.tostring(closed_count) : "—",
                   has_close ? color.lime : color.gray, 3)
-    f_cell(11, 0, "Loss — near TP2", color.white, 3)
-    f_cell(11, 1, has_close ? str.tostring(near_pct, "0.0") + "%" : "—",
+    // CONDITIONAL survival rate: of the trades that hit TP1 then dipped back
+    // to BE, how many still finished at TP2. Numerator = n_win_tp1_be_tp2
+    // (TP1→BE→TP2 wins). Denominator = those wins + every loss whose MFE
+    // reached TP1 (>=1R): both MFE>=1R loss buckets (after-TP1 + near-TP2).
+    // A near-TP2 loss also crossed BE on the way to SL (SL sits beyond BE), so
+    // each such loss dipped through BE by definition — qualifies for the base.
+    // Display-only; reuses existing counters. Teal; "—" gray when base == 0.
+    be_tp2_base = n_win_tp1_be_tp2 + n_loss_aftertp1 + n_loss_near
+    be_tp2_odds = be_tp2_base > 0 ? n_win_tp1_be_tp2 * 100.0 / be_tp2_base : 0.0
+    f_cell(11, 0, "TP1→BE → TP2 odds", color.white, 3)
+    f_cell(11, 1, be_tp2_base > 0 ?
+                    str.tostring(be_tp2_odds, "0") + "% · " +
+                    str.tostring(n_win_tp1_be_tp2) + "/" + str.tostring(be_tp2_base) : "—",
+                  be_tp2_base > 0 ? i_col_be : color.gray, 3)
+    f_cell(12, 0, "Loss — near TP2", color.white, 3)
+    f_cell(12, 1, has_close ? str.tostring(near_pct, "0.0") + "% · " +
+                    str.tostring(n_loss_near) + "/" + str.tostring(closed_count) : "—",
                   has_close ? color.orange : color.gray, 3)
-    f_cell(12, 0, "Loss — after TP1", color.white, 3)
-    f_cell(12, 1, has_close ? str.tostring(aftertp1_pct, "0.0") + "%" : "—",
+    f_cell(13, 0, "Loss — after TP1", color.white, 3)
+    f_cell(13, 1, has_close ? str.tostring(aftertp1_pct, "0.0") + "% · " +
+                    str.tostring(n_loss_aftertp1) + "/" + str.tostring(closed_count) : "—",
                   has_close ? color.red : color.gray, 3)
-    f_cell(13, 0, "Loss — straight to SL", color.white, 3)
-    f_cell(13, 1, has_close ? str.tostring(straight_pct, "0.0") + "%" : "—",
+    f_cell(14, 0, "Loss — straight to SL", color.white, 3)
+    f_cell(14, 1, has_close ? str.tostring(straight_pct, "0.0") + "% · " +
+                    str.tostring(n_loss_straight) + "/" + str.tostring(closed_count) : "—",
                   has_close ? color.red : color.gray, 3)
 
     // Avg hold = Σ(close − open) ÷ closed trades. f_dur handles int-division
     // flooring + the d/h vs h/m format. avg_hold_ms floored once here too.
     int avg_hold_ms = has_close ? int(math.floor(sum_hold_ms / closed_count)) : 0
     hold_str = not has_close ? "—" : f_dur(avg_hold_ms)
-    f_cell(14, 0, "Avg Hold / Trade", color.white, 3)
-    f_cell(14, 1, hold_str, has_close ? color.silver : color.gray, 3)
+    f_cell(15, 0, "Avg Hold / Trade", color.white, 3)
+    f_cell(15, 1, hold_str, has_close ? color.silver : color.gray, 3)
 
     // =================================================================
-    // RIGHT-pair RUNNING ROW INDEX. PERFORMANCE ends at fixed row 14
-    // (cols 3-4). The SESSIONS band (i_show_sess) and its DoW sub-rows
+    // RIGHT-pair RUNNING ROW INDEX. PERFORMANCE ends at fixed row 15
+    // (cols 3-4) — one row longer now the Win row carries the TP1→BE→TP2
+    // sub-slice. The SESSIONS band (i_show_sess) and its DoW sub-rows
     // (i_show_dow) are CONDITIONAL, so a fixed mapping would collide. From
-    // row 15 on we use counter `rR` that advances exactly once per emitted
+    // row 16 on we use counter `rR` that advances exactly once per emitted
     // RIGHT-pair row, independent of the LEFT pair's `rL`. table.clear
-    // (above) wipes the full 5×36 span each render, so hidden rows never
+    // (above) wipes the full span each render, so hidden rows never
     // show stale text.
     // =================================================================
-    int rR = 15
+    int rR = 16
 
     // -- SESSIONS (display-only; entire band hidden when i_show_sess off) ---
     if i_show_sess
