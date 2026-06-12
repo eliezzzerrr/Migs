@@ -203,6 +203,8 @@ i_show_setup_note = input.bool(true, "Show GET READY note (SETUP state)", group=
      tooltip="When the State reaches SETUP·BUY / SETUP·SELL — price is within Entry-proximity of the OB and every gate (session, date, cooldown, day limits, HTF bias) is green — draw ONE bold 'GET READY' label at the right edge of the chart, beside current price. This marks a signal as IMMINENT (the sim fires the moment the confirmed bar triggers). Shows the projected entry / SL / TP2 from the same watch_* levels the WATCH line uses. Live-only (tracks the last bar); never paints historical SETUP bars.")
 i_ready_release = input.float(0.8, "GET READY release (× ATR)", minval=0.4, step=0.1, group=g_disp,
      tooltip="DISPLAY-ONLY hysteresis (does NOT touch the 0.4-ATR firing engine). The GET READY label SHOWS the instant price enters Entry-proximity of the OB (the real SETUP/ADD-ready condition). Once shown, it does NOT vanish the moment price ticks back outside that band — instead it HOLDS (dimmed, '(near)' appended) until price drifts farther than this multiple of ATR from the OB edge, OR the setup hard-dies (OB aged/replaced, killzone closed, slot taken, trade fired, BOS gone). Must be ≥ the Entry-proximity (0.4). Larger = stickier label / fewer flickers; the imminent-approach alert still fires only once per genuine approach and re-arms only after a full HIDE.")
+i_preopen_mins = input.int(15, "GET READY pre-open lookahead (min)", minval=0, maxval=60, group=g_disp,
+     tooltip="DISPLAY-ONLY look-ahead for the GET READY label. When the candidate setup is fully formed (BOS active, OB anchored, price in proximity, HTF ok, date/cooldown/day gates green) and the ONLY failing gate is the killzone — because the next ENABLED killzone with a passing day-of-week filter opens within this many minutes — the GET READY label appears early, suffixed e.g. '(London opens in 3m)'. The minute count updates live and the label transitions to the normal live SETUP state the instant the session actually opens. 0 disables the pre-open look-ahead (label only shows once price is genuinely in a killzone, as before). Computed chart-side from the killzone session strings + DoW filters + Timezone — the firing engine is untouched.")
 i_show_breakdown = input.bool(true, "Show session/weekday R breakdown", group=g_disp,
      tooltip="Optional panel attributing realized R and trade count to the session and the weekday each trade OPENED in (data-driven from the sim itself, no priors). Σ(session R)=Σ(weekday R)=gross Total R. Default OFF.")
 i_bd_pos    = input.string("bottom_left", "Breakdown panel position",
@@ -736,6 +738,54 @@ method update_kz(KZ this) =>
         box.set_text_size(b, kz_bars < 3 ? size.normal :
                              kz_bars < 6 ? size.large : size.huge)
     this.was_in_sess := in_sess
+
+// =====================================================================
+// preopen_mins_for() — minutes until a killzone's NEXT START opens, in its
+// own timezone, respecting that session's per-day DoW filter (the SAME 7
+// booleans the engine ANDs into in_session). DISPLAY-ONLY (drives the GET
+// READY pre-open look-ahead); the firing engine never reads it.
+//
+// How it works (chart-side, from inputs only — no engine/SigState state):
+//   • Parse the START "HHMM" from the session string's first 4 chars
+//     (input.session is always "HHMM-HHMM"). hh = chars 0-1, mm = chars 2-3.
+//   • For day_offset in {0 today, 1 tomorrow}: build that open's epoch via
+//     timestamp(tz, Y, M, D+offset, hh, mm, 0). timestamp() normalizes the
+//     day overflow, so D+1 rolls months/years correctly.
+//   • Δmin = (open_ts − timenow) / 60000. timenow makes the count tick live.
+//     Keep the open only if 0 ≤ Δmin ≤ cap (future, within the window) AND
+//     the DoW gate passes for the WEEKDAY the open actually lands on
+//     (dayofweek(open_ts, tz)).
+//   • Today is tried first; tomorrow is the fallback that also catches the
+//     midnight-crossing sessions (NY Lunch 0000-, NY PM 0130-) once today's
+//     open has already passed. Returns the soonest qualifying Δmin, else na.
+//   • A session with ALL DoW unticked never qualifies (every open's DoW gate
+//     is false) → it's inert here, matching the engine.
+// =====================================================================
+preopen_mins_for(bool en, string sess_str, string tz, int cap,
+   bool d_mon, bool d_tue, bool d_wed, bool d_thu, bool d_fri, bool d_sat, bool d_sun) =>
+    float best = na
+    if en and cap > 0 and str.length(sess_str) >= 4
+        hh = str.tonumber(str.substring(sess_str, 0, 2))
+        mm = str.tonumber(str.substring(sess_str, 2, 4))
+        if not na(hh) and not na(mm)
+            base_y = year(timenow, tz)
+            base_m = month(timenow, tz)
+            base_d = dayofmonth(timenow, tz)
+            for off = 0 to 1
+                open_ts = timestamp(tz, base_y, base_m, base_d + off, int(hh), int(mm), 0)
+                dmin    = (open_ts - timenow) / 60000.0
+                if dmin >= 0 and dmin <= cap
+                    odow = dayofweek(open_ts, tz)
+                    dow_ok = (odow == dayofweek.monday    and d_mon) or
+                       (odow == dayofweek.tuesday   and d_tue) or
+                       (odow == dayofweek.wednesday and d_wed) or
+                       (odow == dayofweek.thursday  and d_thu) or
+                       (odow == dayofweek.friday    and d_fri) or
+                       (odow == dayofweek.saturday  and d_sat) or
+                       (odow == dayofweek.sunday    and d_sun)
+                    if dow_ok and (na(best) or dmin < best)
+                        best := dmin
+    best
 
 // =====================================================================
 // compute_sig_state() — full signal + sim pipeline. See header for the
@@ -2337,6 +2387,69 @@ add_ready_sell   = add_ready_dir == -1
 add_is_ready     = add_ready_dir != 0
 
 // =====================================================================
+// PRE-OPEN GET READY surface (DISPLAY-ONLY — engine untouched).
+// User case: every gate green EXCEPT the killzone, and an enabled session
+// opens in a few minutes. The normal SETUP state can't fire (gates_green
+// requires in_session), so the label would stay hidden until the bell.
+// This synthesises an early SHOW for that exact case:
+//   • NOT currently in_session (the lone failing gate),
+//   • a candidate flat setup is fully formed — bull_setup/bear_setup are the
+//     engine flags and DO NOT embed session (have_ob && near && htf_ok), so
+//     they already encode BOS-active + OB-anchored + price-in-proximity + HTF,
+//   • every OTHER firing gate green: no live position, date range, cooldown,
+//     day-loss, day-max (= gates_green WITHOUT its in_session leg),
+//   • the soonest ENABLED+DoW-passing killzone START is ≤ i_preopen_mins away.
+// minutes-to-open is computed per enabled session by preopen_mins_for() and
+// the soonest taken. Pre-open is a flat-entry concept only (no ADD: an ADD
+// needs a live position, but we require active_count==0 here). When the
+// session actually opens, in_session flips true and this hands off cleanly to
+// the normal state_is_setup SHOW.
+// =====================================================================
+gates_green_nosess = active_count == 0 and in_date_range and cooldown_ok and
+  not (i_max_day_loss_r > 0 and day_r_now <= -i_max_day_loss_r) and
+  not (i_max_day_trades > 0 and day_opens_now >= i_max_day_trades)
+// Soonest enabled-killzone open within the look-ahead (na = none). Only worth
+// computing on the last bar (it's a live aid keyed off timenow). Each session's
+// own DoW filter gates the day the open lands on — inert (all-DoW-off) sessions
+// never qualify. Master session toggle off (i_use_sessions false) ⇒ no
+// killzone gate at all ⇒ no pre-open concept, so suppress.
+float minutes_to_open = na
+string preopen_sess   = ""
+if barstate.islast and i_preopen_mins > 0 and i_use_sessions
+    m_asia   = preopen_mins_for(i_use_asia,   i_asia_sess,   i_kz_tz, i_preopen_mins,
+       i_asia_dow_mon, i_asia_dow_tue, i_asia_dow_wed, i_asia_dow_thu, i_asia_dow_fri, i_asia_dow_sat, i_asia_dow_sun)
+    m_london = preopen_mins_for(i_use_london, i_london_sess, i_kz_tz, i_preopen_mins,
+       i_london_dow_mon, i_london_dow_tue, i_london_dow_wed, i_london_dow_thu, i_london_dow_fri, i_london_dow_sat, i_london_dow_sun)
+    m_nyam   = preopen_mins_for(i_use_nyam,   i_nyam_sess,   i_kz_tz, i_preopen_mins,
+       i_nyam_dow_mon, i_nyam_dow_tue, i_nyam_dow_wed, i_nyam_dow_thu, i_nyam_dow_fri, i_nyam_dow_sat, i_nyam_dow_sun)
+    m_nylu   = preopen_mins_for(i_use_nylu,   i_nylu_sess,   i_kz_tz, i_preopen_mins,
+       i_nylu_dow_mon, i_nylu_dow_tue, i_nylu_dow_wed, i_nylu_dow_thu, i_nylu_dow_fri, i_nylu_dow_sat, i_nylu_dow_sun)
+    m_nypm   = preopen_mins_for(i_use_nypm,   i_nypm_sess,   i_kz_tz, i_preopen_mins,
+       i_nypm_dow_mon, i_nypm_dow_tue, i_nypm_dow_wed, i_nypm_dow_thu, i_nypm_dow_fri, i_nypm_dow_sat, i_nypm_dow_sun)
+    // Reduce to the soonest, carrying that session's display name alongside.
+    if not na(m_asia)
+        minutes_to_open := m_asia
+        preopen_sess    := i_asia_txt
+    if not na(m_london) and (na(minutes_to_open) or m_london < minutes_to_open)
+        minutes_to_open := m_london
+        preopen_sess    := i_london_txt
+    if not na(m_nyam) and (na(minutes_to_open) or m_nyam < minutes_to_open)
+        minutes_to_open := m_nyam
+        preopen_sess    := i_nyam_txt
+    if not na(m_nylu) and (na(minutes_to_open) or m_nylu < minutes_to_open)
+        minutes_to_open := m_nylu
+        preopen_sess    := i_nylu_txt
+    if not na(m_nypm) and (na(minutes_to_open) or m_nypm < minutes_to_open)
+        minutes_to_open := m_nypm
+        preopen_sess    := i_nypm_txt
+// The pre-open SHOW: out-of-session, a full flat candidate setup, all other
+// firing gates green, and an enabled killzone opening within the window.
+preopen_show = not in_session and gates_green_nosess and (bull_setup or bear_setup) and not na(minutes_to_open)
+preopen_buy  = preopen_show and bull_setup
+// Whole-minute countdown for the headline (ceil so "0m" only shows at the bell).
+preopen_mins_disp = na(minutes_to_open) ? 0 : int(math.ceil(minutes_to_open))
+
+// =====================================================================
 // GET READY display hysteresis (DISPLAY-ONLY — engine untouched).
 // The firing engine still uses the sacred 0.4-ATR proximity rule; nothing
 // below is read by compute_sig_state(). Problem solved here: as price
@@ -2368,7 +2481,11 @@ ready_setup_alive = chk_cand_dir != 0 and chk_bos_active and chk_ob and chk_htf_
 // Within the release band? chk_dist_atr is na when no OB anchored → treat as
 // out-of-band (forces HIDE). i_ready_release is clamped ≥ 0.4 = the show edge.
 ready_in_release = not na(chk_dist_atr) and chk_dist_atr <= i_ready_release
-ready_show       = state_is_setup or add_is_ready
+// SHOW = the live in-session SETUP/ADD condition, OR the pre-open look-ahead
+// (out-of-session flat candidate, gates green, killzone opening soon). Pre-open
+// carries no HOLD of its own (ready_setup_alive requires chk_killzone, false
+// pre-open) — it simply hands off to state_is_setup once the bell rings.
+ready_show       = state_is_setup or add_is_ready or preopen_show
 var bool ready_was_visible = false
 // HOLD only when we were already visible last bar, the engine condition just
 // dropped, we're still inside the release band, and the setup is otherwise
@@ -2416,11 +2533,20 @@ if i_alerts_on
     //    re-arms the alert; one alert per genuine approach. SETUP and ADD share
     //    the i_alert_setup slot (mutually exclusive: SETUP needs active_count==0,
     //    ADD needs a live position). Message variant picks the right wording. --
+    //    The PRE-OPEN look-ahead also rides this slot: when SHOW is entered out
+    //    of session (killzone imminent), the message says "<Session> opens in
+    //    Xm" instead. Same rising-edge gate ⇒ same one-per-approach re-arm.
     if i_alert_setup and ready_show_entered
-        s_is_add = not state_is_setup and add_is_ready
-        s_dir    = (s_is_add ? add_ready_buy : state_setup_buy) ? "BUY" : "SELL"
-        s_ent    = not na(setup_entry_px) ? setup_entry_px : watch_entry_px
-        s_msg    = s_is_add ?
+        s_preopen = not state_is_setup and not add_is_ready and preopen_show
+        s_is_add  = not state_is_setup and add_is_ready
+        s_dir     = (s_preopen ? preopen_buy : s_is_add ? add_ready_buy : state_setup_buy) ? "BUY" : "SELL"
+        s_ent     = not na(setup_entry_px) ? setup_entry_px : watch_entry_px
+        s_msg     = s_preopen ?
+          ("BG SMC: GET READY " + s_dir + " — all gates green, " + preopen_sess +
+           " opens in " + str.tostring(preopen_mins_disp) + "m " +
+           syminfo.ticker + " " + timeframe.period +
+           (na(s_ent) ? "" : " | entry ~" + str.tostring(s_ent, format.mintick))) :
+          s_is_add ?
           ("BG SMC: ADD " + s_dir + " imminent — price at OB, slot free " +
            syminfo.ticker + " " + timeframe.period +
            (na(s_ent) ? "" : " | entry ~" + str.tostring(s_ent, format.mintick))) :
@@ -2853,19 +2979,30 @@ if barstate.islast
         // drifted out but within the release band and the setup is otherwise
         // alive. HOLD dims the bg and appends "(near)" to the headline.
         sn_hold   = not ready_show
+        // PRE-OPEN sub-state: SHOW is live (ready_show true) but neither the
+        // in-session SETUP nor ADD condition holds — it's the killzone-imminent
+        // look-ahead. Direction comes from preopen_buy (state_setup_buy is false
+        // out of session, so it can't be reused). Rendered dimmed like HOLD to
+        // read as provisional, with a "(<Session> opens in Xm)" headline suffix.
+        sn_preopen = ready_show and not state_is_setup and not add_is_ready
         // Two trigger sources share this label: the flat SETUP state and the
         // in-trade ADD-ready state. SETUP wins precedence if both somehow hold
         // (they are mutually exclusive in practice — SETUP needs active_count==0).
         // In HOLD both flags are false, so fall back to the still-alive candidate
         // direction (chk_cand_dir): +1 BUY, -1 SELL. ADD vs flat is preserved
         // from active_count (a live position ⇒ this would be an ADD).
-        sn_is_add = sn_hold ? active_count > 0 : (not state_is_setup and add_is_ready)
-        sn_buy    = sn_hold ? (chk_cand_dir == 1) :
+        sn_is_add = sn_preopen ? false :
+          sn_hold ? active_count > 0 : (not state_is_setup and add_is_ready)
+        sn_buy    = sn_preopen ? preopen_buy :
+          sn_hold ? (chk_cand_dir == 1) :
           (sn_is_add ? add_ready_buy : state_setup_buy)
         sn_core   = sn_is_add ?
           (sn_buy ? "⚡ GET READY — ADD BUY" : "⚡ GET READY — ADD SELL") :
           (sn_buy ? "⚡ GET READY — BUY" : "⚡ GET READY — SELL")
-        sn_head   = sn_hold ? sn_core + " (near)" : sn_core
+        // Pre-open suffix takes precedence over "(near)"; the two never coexist
+        // (pre-open is out-of-session, HOLD requires chk_killzone in-session).
+        sn_head   = sn_preopen ? sn_core + " (" + preopen_sess + " opens in " + str.tostring(preopen_mins_disp) + "m)" :
+          sn_hold ? sn_core + " (near)" : sn_core
         // Projected entry/SL/TP2: prefer setup_* (the engine's own entry math,
         // populated whenever price is in proximity = exactly the SETUP state).
         // Fall back to watch_* so the line still renders if setup_* were ever
@@ -2887,12 +3024,13 @@ if barstate.islast
         // Anchor at the right edge beside current price; arrow points at it.
         sn_x     = bar_index + 2
         sn_y     = na(sn_entry_px) ? close : sn_entry_px
-        // HOLD dims the label bg (more transparent) so the "(near)" state reads
-        // as provisional vs the solid SHOW. color.new with a fixed 55-transp on
-        // the accent; SHOW keeps the input color as-is.
-        sn_bg    = sn_hold ? color.new(sn_buy ? i_col_buy : i_col_sell, 55) :
+        // HOLD and PRE-OPEN both dim the label bg (more transparent) so the
+        // provisional state reads distinct from a live-now SETUP. color.new with
+        // a fixed 55-transp on the accent; the live SHOW keeps the input color.
+        sn_dim   = sn_hold or sn_preopen
+        sn_bg    = sn_dim ? color.new(sn_buy ? i_col_buy : i_col_sell, 55) :
           (sn_buy ? i_col_buy : i_col_sell)
-        sn_txtc  = sn_hold ? color.new(color.white, 25) : color.white
+        sn_txtc  = sn_dim ? color.new(color.white, 25) : color.white
         sn_style = sn_buy ? label.style_label_lower_left : label.style_label_upper_left
         if na(setup_note_lbl)
             setup_note_lbl := label.new(sn_x, sn_y, sn_txt, xloc = xloc.bar_index,
@@ -2910,9 +3048,9 @@ if barstate.islast
         //    box is cleared so no stale geometry lingers. --
         rr_left  = bar_index
         rr_right = bar_index + 8
-        // HOLD dims the RR fills to match the provisional label (88 vs 75).
-        rr_tp_c  = color.new(color.green, sn_hold ? 88 : 75)
-        rr_sl_c  = color.new(color.red,   sn_hold ? 88 : 75)
+        // HOLD/PRE-OPEN dim the RR fills to match the provisional label (88 vs 75).
+        rr_tp_c  = color.new(color.green, sn_dim ? 88 : 75)
+        rr_sl_c  = color.new(color.red,   sn_dim ? 88 : 75)
         // Reward box: entry → TP2.
         if not na(sn_entry_px) and not na(sn_tp2_px)
             if na(setup_rr_tp_box)
